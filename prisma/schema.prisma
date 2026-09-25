@@ -1,0 +1,59 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Životní cyklus rezervace:
+// DRAFT -> PENDING_PAYMENT -> PAID -> ACTIVE -> RETURNED -> SETTLED
+// (FAILED / CANCELLED mohou nastat z DRAFT nebo PENDING_PAYMENT)
+enum ReservationStatus {
+  DRAFT // zákazník vyplňuje údaje, ještě nezaplatil
+  PENDING_PAYMENT // platba/kauce odeslána na Comgate, čeká se na webhook
+  PAID // záloha zaplacena + kauce zablokována -> lze odemknout appku
+  ACTIVE // zákazník má aktivní přístup k vozu (mezi převzetím a vrácením)
+  RETURNED // vůz vrácen, čeká se na kontrolu fotek/telemetrie
+  SETTLED // kauce uvolněna nebo strhnuta, rezervace uzavřena
+  FAILED // platba selhala
+  CANCELLED // zrušeno zákazníkem/majitelem před platbou
+}
+
+model Reservation {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Zákazník (minimální set - PII se šifruje/spravuje podle GDPR retention policy)
+  customerName  String
+  customerEmail String
+  customerPhone String
+
+  // Termín a vůz
+  vehicleVin String
+  startsAt   DateTime
+  endsAt     DateTime
+
+  // Ceny
+  depositAmountCzk Int // záloha v Kč
+  kauceAmountCzk   Int // výše kauce v Kč
+
+  status ReservationStatus @default(DRAFT)
+
+  // Vazba na platby (Comgate transId)
+  depositTransId String? // platba zálohy
+  kauceTransId   String? // pre-auth kauce (drží se pro release/capture)
+
+  // Vazba na přístup k vozu (FleetBold/Tesla invite id)
+  vehicleAccessId    String?
+  vehicleAccessError String? // poslední chyba při vytváření přístupu (pro retry a monitoring)
+
+  // Kontrola po vrácení
+  returnPhotosUrls String[] // odkazy na fotky z předávacího/vratného protokolu
+  damageNoteText   String? // poznámka k případné škodě před settlementem
+
+  @@index([status])
+  @@index([customerEmail])
+}
