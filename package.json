@@ -1,0 +1,28 @@
+{
+  "name": "tesla-rental-payment-backend",
+  "version": "0.1.0",
+  "description": "Payment + kauce (pre-auth) backend for Tesla rental, built on Comgate (bank buttons, cards, Google Pay/Apple Pay).",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.16.1",
+    "comgate-node": "^1.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.9",
+    "prisma": "^5.16.1",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.5.3"
+  }
+}
