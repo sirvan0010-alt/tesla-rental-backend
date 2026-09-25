@@ -48,6 +48,7 @@ model Reservation {
 
   // Vazba na přístup k vozu (FleetBold/Tesla invite id)
   vehicleAccessId    String?
+  vehicleUnlockUrl   String? // odkaz/deep-link vrácený poskytovatelem pro tlačítko "Odemknout"
   vehicleAccessError String? // poslední chyba při vytváření přístupu (pro retry a monitoring)
 
   // Kontrola po vrácení

@@ -71,10 +71,18 @@ export async function markPaymentFailed(reservationId: string) {
 }
 
 /** Po vytvoření dočasného přístupu k vozu (FleetBold/Tesla invite) po úspěšné platbě. */
-export async function saveVehicleAccess(params: { reservationId: string; vehicleAccessId: string }) {
+export async function saveVehicleAccess(params: {
+  reservationId: string;
+  vehicleAccessId: string;
+  vehicleUnlockUrl?: string;
+}) {
   return prisma.reservation.update({
     where: { id: params.reservationId },
-    data: { vehicleAccessId: params.vehicleAccessId, vehicleAccessError: null },
+    data: {
+      vehicleAccessId: params.vehicleAccessId,
+      vehicleUnlockUrl: params.vehicleUnlockUrl,
+      vehicleAccessError: null,
+    },
   });
 }
 
