@@ -15,6 +15,7 @@ app.use("/api/documents", documentsRouter);
 
 // Nahrané fotky dokladů NEJSOU veřejné - stejný x-admin-key jako /api/documents/:id/view
 app.use("/uploads/documents", requireAdminKey, express.static(path.join(__dirname, "..", "uploads", "documents")));
+app.use("/uploads/returns", requireAdminKey, express.static(path.join(__dirname, "..", "uploads", "returns")));
 
 app.use(express.static(path.join(__dirname, "..", "public")));
 
