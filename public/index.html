@@ -92,6 +92,10 @@
   <input id="email" type="email" placeholder="jan@example.com" />
   <label for="phone">Telefon</label>
   <input id="phone" type="tel" placeholder="+420 600 123 456" />
+  <label for="license">Fotka řidičského průkazu</label>
+  <input id="license" type="file" accept="image/*" capture="environment" />
+  <label for="idcard">Fotka občanského průkazu (volitelné)</label>
+  <input id="idcard" type="file" accept="image/*" capture="environment" />
   <div class="hint">Termín i výše zálohy/kauce se u této rezervace nastavují automaticky podle vybraného vozu a data.</div>
   <div class="error" id="details-error"></div>
   <button onclick="submitDetails()">Pokračovat k platbě</button>
@@ -135,6 +139,11 @@
       errBox.textContent = "Vyplňte prosím všechna pole.";
       return;
     }
+    const licenseFile = document.getElementById("license").files[0];
+    if (!licenseFile) {
+      errBox.textContent = "Nahrajte prosím fotku řidičského průkazu.";
+      return;
+    }
 
     // Demo hodnoty vozu/termínu/částek - v appce se předvyplní z výběru rezervace
     const now = new Date();
@@ -159,6 +168,17 @@
       if (!res.ok) throw new Error();
       const reservation = await res.json();
       reservationId = reservation.id;
+
+      const formData = new FormData();
+      formData.append("driverLicense", licenseFile);
+      const idcardFile = document.getElementById("idcard").files[0];
+      if (idcardFile) formData.append("idCard", idcardFile);
+      const uploadRes = await fetch(`/api/documents/${reservationId}/upload`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!uploadRes.ok) throw new Error("upload");
+
       await loadMethods();
       show("step-payment");
     } catch {
