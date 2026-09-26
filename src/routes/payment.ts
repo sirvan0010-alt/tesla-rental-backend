@@ -26,42 +26,25 @@ import { requireAdminKey } from "../middleware/adminAuth";
 
 const router = Router();
 
-/**
- * POST /api/payment/reservations
- * Krok 1-2 z onboarding flow: založí rezervaci ve stavu DRAFT,
- * ještě před platbou. Vrací reservationId, které appka pak posílá
- * do /deposit a /kauce.
- */
 router.post("/reservations", async (req, res) => {
-  const {
-    customerName,
-    customerEmail,
-    customerPhone,
-    vehicleVin,
-    startsAt,
-    endsAt,
-    depositAmountCzk,
-    kauceAmountCzk,
-  } = req.body;
+  const { customerName, customerEmail, customerPhone, vehicleId, startsAt, endsAt } = req.body;
   try {
     const reservation = await createReservation({
       customerName,
       customerEmail,
       customerPhone,
-      vehicleVin,
+      vehicleId,
       startsAt: new Date(startsAt),
       endsAt: new Date(endsAt),
-      depositAmountCzk,
-      kauceAmountCzk,
     });
     res.json(reservation);
   } catch (err) {
     console.error("createReservation error", err);
-    res.status(400).json({ error: "Rezervaci se nepodařilo založit" });
+    const message = err instanceof Error ? err.message : "Rezervaci se nepodařilo založit";
+    res.status(400).json({ error: message });
   }
 });
 
-/** GET /api/payment/reservations/:id - stav rezervace pro frontend (polling/refresh appky) */
 router.get("/reservations/:id", async (req, res) => {
   try {
     res.json(await getReservation(req.params.id));
@@ -70,16 +53,9 @@ router.get("/reservations/:id", async (req, res) => {
   }
 });
 
-/**
- * Vytvoří přístup k vozu a pošle instrukce - voláno po přechodu na PAID.
- * Idempotentní: pokud už rezervace vehicleAccessId má, nic nedělá.
- * Chyba se ULOŽÍ na rezervaci, ale nevyhazuje se dál - platba je v pořádku
- * proběhlá, přístup lze kdykoli zopakovat přes /reservations/:id/retry-access
- * (viz endpoint níže), aniž by bylo nutné cokoliv platit znovu.
- */
 async function ensureVehicleAccess(reservationId: string) {
   const reservation = await getReservation(reservationId);
-  if (reservation.vehicleAccessId) return; // už hotovo, nic nedělat
+  if (reservation.vehicleAccessId) return;
 
   try {
     const access = await createVehicleAccess({
@@ -107,15 +83,9 @@ async function ensureVehicleAccess(reservationId: string) {
       reservationId,
       error: err instanceof Error ? err.message : String(err),
     });
-    // Záměrně nepřehazujeme dál - viz komentář výše funkce.
   }
 }
 
-/**
- * POST /api/payment/reservations/:id/retry-access
- * Ruční/cron-driven retry, pokud vytvoření přístupu po platbě selhalo
- * (např. výpadek FleetBold API). Bezpečné volat opakovaně (idempotentní).
- */
 router.post("/reservations/:id/retry-access", async (req, res) => {
   try {
     await ensureVehicleAccess(req.params.id);
@@ -126,12 +96,6 @@ router.post("/reservations/:id/retry-access", async (req, res) => {
   }
 });
 
-/**
- * GET /api/payment/methods
- * Frontend zavolá při zobrazení platebního kroku a vykreslí tlačítka
- * (karta, Google Pay, jednotlivé banky) přesně podle toho, co Comgate
- * aktuálně nabízí - žádný hardcoded seznam bank v appce.
- */
 router.get("/methods", async (_req, res) => {
   try {
     const methods = await listAvailablePaymentMethods();
@@ -142,11 +106,6 @@ router.get("/methods", async (_req, res) => {
   }
 });
 
-/**
- * POST /api/payment/deposit
- * body: { reservationId, amountCzk, customerEmail, method }
- * Vytvoří platbu zálohy zvolenou metodou a vrátí redirect URL na bránu.
- */
 router.post("/deposit", async (req, res) => {
   const { reservationId, amountCzk, customerEmail, method } = req.body;
   try {
@@ -164,11 +123,6 @@ router.post("/deposit", async (req, res) => {
   }
 });
 
-/**
- * POST /api/payment/kauce
- * body: { reservationId, depositCzk, customerEmail }
- * Vytvoří blokaci (pre-auth) kauce - peníze se zablokují, nestrhnou.
- */
 router.post("/kauce", async (req, res) => {
   const { reservationId, depositCzk, customerEmail } = req.body;
   try {
@@ -185,7 +139,6 @@ router.post("/kauce", async (req, res) => {
   }
 });
 
-/** POST /api/payment/kauce/:transId/release - auto vráceno bez škody */
 router.post("/kauce/:transId/release", async (req, res) => {
   try {
     await releaseDepositHold(req.params.transId);
@@ -196,7 +149,6 @@ router.post("/kauce/:transId/release", async (req, res) => {
   }
 });
 
-/** POST /api/payment/kauce/:transId/capture - strhnutí (celé/části) kauce za škodu */
 router.post("/kauce/:transId/capture", async (req, res) => {
   const { amountCzk } = req.body;
   try {
@@ -211,18 +163,6 @@ router.post("/kauce/:transId/capture", async (req, res) => {
   }
 });
 
-/**
- * POST /api/payment/webhook
- * Comgate sem posílá notifikaci o změně stavu platby/kauce (jak pro
- * zálohu, tak zvlášť pro pre-auth kauce - přijde tedy typicky 2x na
- * jednu rezervaci, jednou pro každý transId).
- *
- * Nutné nastavit tuto URL jako "notifikační URL" v Comgate administraci.
- *
- * Bezpečnostní poznámka: Comgate notifikace nejsou podepsané - webhook
- * musí vždy ověřit skutečný stav zpět přes getPaymentStatus(transId),
- * ne slepě věřit obsahu notifikace (ochrana proti podvržení).
- */
 router.post("/webhook", async (req, res) => {
   const { transId, refId } = req.body;
   try {
@@ -232,14 +172,12 @@ router.post("/webhook", async (req, res) => {
 
     if (!reservation) {
       console.warn(`Webhook: transId ${transId} nepřiřazen k žádné rezervaci`);
-      return res.sendStatus(200); // Comgate nemá co opakovat
+      return res.sendStatus(200);
     }
 
     const verifiedStatus = await getPaymentStatus(transId);
 
     if (verifiedStatus.status === "PAID" || verifiedStatus.status === "AUTHORIZED") {
-      // Obě transakce (záloha i kauce) musí být na rezervaci evidované,
-      // než ji označíme jako plně zaplacenou a odemkneme appku pro vstup.
       if (await isFullyPaid(reservation.id)) {
         await markPaid(reservation.id);
         console.log(`Rezervace ${reservation.id}: PAID - vytvářím přístup k vozu`);
@@ -253,12 +191,10 @@ router.post("/webhook", async (req, res) => {
     res.sendStatus(200);
   } catch (err) {
     console.error("webhook error", err);
-    // 500 -> Comgate notifikaci zopakuje, což je tady žádoucí
     res.sendStatus(500);
   }
 });
 
-/** GET /api/payment/:transId/status - pro polling stavu z frontendu */
 router.get("/:transId/status", async (req, res) => {
   try {
     const status = await getPaymentStatus(req.params.transId);
@@ -268,13 +204,6 @@ router.get("/:transId/status", async (req, res) => {
   }
 });
 
-/**
- * POST /api/payment/reservations/:id/activate
- * Volá appka, když zákazník poprvé klikne "Odemknout vůz". Jen ověří,
- * že rezervace je opravdu PAID a má vytvořený přístup, a přepne ji na
- * ACTIVE (samotné odemčení fyzicky provádí FleetBold/Tesla appka -
- * tenhle endpoint jen posouvá stav rezervace v naší databázi).
- */
 router.post("/reservations/:id/activate", async (req, res) => {
   try {
     const reservation = await getReservation(req.params.id);
@@ -291,18 +220,6 @@ router.post("/reservations/:id/activate", async (req, res) => {
   }
 });
 
-/**
- * POST /api/payment/reservations/:id/settle
- * Majitel tady po kontrole fotek rozhodne o kauci. Chráněno x-admin-key.
- * body: { damaged: boolean, damageAmountCzk?: number, note?: string }
- *
- * - damaged=false -> uvolní se celá kauce (releaseDepositHold)
- * - damaged=true  -> strhne se damageAmountCzk z kauce (captureDepositHold)
- *   (musí být <= výše kauce - Comgate capturePreauth stejně víc nedovolí)
- *
- * V obou případech se navíc zruší přístup k vozu (revokeVehicleAccess) -
- * i kdyby appka/webhook to už udělaly dřív, je to bezpečné zavolat znovu.
- */
 router.post("/reservations/:id/settle", requireAdminKey, async (req, res) => {
   const { damaged, damageAmountCzk, note } = req.body;
   try {
@@ -327,8 +244,6 @@ router.post("/reservations/:id/settle", requireAdminKey, async (req, res) => {
       try {
         await revokeVehicleAccess(reservation.vehicleAccessId);
       } catch (err) {
-        // Nezastavuje vyrovnání kauce - jen se zaloguje, přístup stejně
-        // vyprší sám (viz komentář ve vehicleAccessService).
         console.error(`Revoke vehicle access failed for ${reservation.id}`, err);
       }
     }
