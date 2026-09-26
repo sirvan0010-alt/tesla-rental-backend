@@ -31,7 +31,11 @@
       const res = await fetch(`/api/documents/${id}/view`, { headers: { "x-admin-key": key } });
       if (!res.ok) throw new Error((await res.json()).error || "Chyba");
       const d = await res.json();
+      const returnPhotosHtml = (d.returnPhotosUrls || [])
+        .map((u) => `<img src="${u}?key=${encodeURIComponent(key)}">`)
+        .join("");
       out.innerHTML = `
+        <div class="row"><b>Stav rezervace:</b> ${d.status}</div>
         <div class="row"><b>Jméno:</b> ${d.customerName}</div>
         <div class="row"><b>E-mail:</b> ${d.customerEmail}</div>
         <div class="row"><b>Telefon:</b> ${d.customerPhone}</div>
@@ -43,9 +47,42 @@
         <div class="row"><b>Občanský průkaz:</b><br>${
           d.idCardPhotoUrl ? `<img src="${d.idCardPhotoUrl}?key=${encodeURIComponent(key)}">` : "nenahráno"
         }</div>
+        <div class="row"><b>Fotky při vrácení:</b><br>${returnPhotosHtml || "zatím nevráceno"}</div>
+        <div class="row"><b>Kauce:</b> ${d.kauceAmountCzk} Kč (transId: ${d.kauceTransId || "-"})</div>
+        ${
+          d.status === "RETURNED"
+            ? `
+        <div class="row">
+          <button onclick="settle(false)">Uvolnit celou kauci (bez škody)</button>
+          <div style="margin-top:14px">
+            <input id="damageAmount" type="number" placeholder="Částka škody v Kč">
+            <button onclick="settle(true)" style="background:#c00">Strhnout kauci za škodu</button>
+          </div>
+        </div>`
+            : d.damageNoteText
+            ? `<div class="row"><b>Poznámka k vyrovnání:</b> ${d.damageNoteText}</div>`
+            : ""
+        }
       `;
     } catch (e) {
       out.innerHTML = `<div class="error">${e.message}</div>`;
+    }
+  }
+
+  async function settle(damaged) {
+    const id = document.getElementById("resId").value.trim();
+    const key = document.getElementById("adminKey").value.trim();
+    const damageAmountCzk = Number(document.getElementById("damageAmount")?.value || 0);
+    try {
+      const res = await fetch(`/api/payment/reservations/${id}/settle`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-key": key },
+        body: JSON.stringify({ damaged, damageAmountCzk }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "Chyba");
+      await load();
+    } catch (e) {
+      document.getElementById("out").innerHTML += `<div class="error">${e.message}</div>`;
     }
   }
 </script>
