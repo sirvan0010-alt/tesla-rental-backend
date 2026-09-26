@@ -18,9 +18,11 @@ import {
   saveVehicleAccess,
   saveVehicleAccessError,
   markActive,
+  markSettled,
 } from "../services/reservationService";
-import { createVehicleAccess } from "../services/vehicleAccessService";
+import { createVehicleAccess, revokeVehicleAccess } from "../services/vehicleAccessService";
 import { sendAccessInstructions } from "../services/notificationService";
+import { requireAdminKey } from "../middleware/adminAuth";
 
 const router = Router();
 
@@ -280,17 +282,65 @@ router.post("/reservations/:id/activate", async (req, res) => {
       return res.status(409).json({ error: "Rezervace není ve stavu PAID" });
     }
     if (!reservation.vehicleAccessId) {
-      return res.status(409).json({
-        error: "Přístup k vozu zatím není připraven, zkuste to za chvíli",
-      });
+      return res.status(409).json({ error: "Přístup k vozu zatím není připraven, zkuste to za chvíli" });
     }
     const updated = await markActive(reservation.id);
-    res.json({
-      ...updated,
-      vehicleUnlockUrl: reservation.vehicleUnlockUrl,
-    });
+    res.json(updated);
   } catch (err) {
     res.status(404).json({ error: "Rezervace nenalezena" });
+  }
+});
+
+/**
+ * POST /api/payment/reservations/:id/settle
+ * Majitel tady po kontrole fotek rozhodne o kauci. Chráněno x-admin-key.
+ * body: { damaged: boolean, damageAmountCzk?: number, note?: string }
+ *
+ * - damaged=false -> uvolní se celá kauce (releaseDepositHold)
+ * - damaged=true  -> strhne se damageAmountCzk z kauce (captureDepositHold)
+ *   (musí být <= výše kauce - Comgate capturePreauth stejně víc nedovolí)
+ *
+ * V obou případech se navíc zruší přístup k vozu (revokeVehicleAccess) -
+ * i kdyby appka/webhook to už udělaly dřív, je to bezpečné zavolat znovu.
+ */
+router.post("/reservations/:id/settle", requireAdminKey, async (req, res) => {
+  const { damaged, damageAmountCzk, note } = req.body;
+  try {
+    const reservation = await getReservation(req.params.id);
+    if (reservation.status !== "RETURNED") {
+      return res.status(409).json({ error: "Rezervace není ve stavu RETURNED - vrácení ještě neproběhlo" });
+    }
+    if (!reservation.kauceTransId) {
+      return res.status(409).json({ error: "K rezervaci chybí kauceTransId, nelze vyrovnat" });
+    }
+
+    if (damaged) {
+      if (!damageAmountCzk || damageAmountCzk <= 0) {
+        return res.status(400).json({ error: "U škody je nutné zadat damageAmountCzk > 0" });
+      }
+      await captureDepositHold({ comgateTransId: reservation.kauceTransId, amountCzk: damageAmountCzk });
+    } else {
+      await releaseDepositHold(reservation.kauceTransId);
+    }
+
+    if (reservation.vehicleAccessId) {
+      try {
+        await revokeVehicleAccess(reservation.vehicleAccessId);
+      } catch (err) {
+        // Nezastavuje vyrovnání kauce - jen se zaloguje, přístup stejně
+        // vyprší sám (viz komentář ve vehicleAccessService).
+        console.error(`Revoke vehicle access failed for ${reservation.id}`, err);
+      }
+    }
+
+    const settled = await markSettled({
+      reservationId: reservation.id,
+      damageNoteText: damaged ? note ?? `Strženo ${damageAmountCzk} Kč z kauce` : undefined,
+    });
+    res.json(settled);
+  } catch (err) {
+    console.error("settle error", err);
+    res.status(502).json({ error: "Vyrovnání kauce selhalo" });
   }
 });
 
