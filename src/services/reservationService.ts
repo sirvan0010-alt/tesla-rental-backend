@@ -1,19 +1,47 @@
 import { prisma } from "../db";
 import { ReservationStatus } from "@prisma/client";
 
-/** Vytvoří novou rezervaci ve stavu DRAFT (krok 1-2 z onboarding flow). */
+/** Vytvoří novou rezervaci ve stavu DRAFT. Bere vehicleId, dopočítá VIN a ceny, ověří dostupnost. */
 export async function createReservation(params: {
   customerName: string;
   customerEmail: string;
   customerPhone: string;
-  vehicleVin: string;
+  vehicleId: string;
   startsAt: Date;
   endsAt: Date;
-  depositAmountCzk: number;
-  kauceAmountCzk: number;
 }) {
+  const vehicle = await prisma.vehicle.findUnique({ where: { id: params.vehicleId } });
+  if (!vehicle || !vehicle.active) {
+    throw new Error("Vůz neexistuje nebo není aktivně nabízený");
+  }
+
+  const conflicting = await prisma.reservation.findFirst({
+    where: {
+      vehicleId: params.vehicleId,
+      status: { notIn: [ReservationStatus.FAILED, ReservationStatus.CANCELLED] },
+      startsAt: { lt: params.endsAt },
+      endsAt: { gt: params.startsAt },
+    },
+  });
+  if (conflicting) {
+    throw new Error("Vůz je v tomto termínu už rezervovaný");
+  }
+
+  const days = Math.max(1, Math.ceil((params.endsAt.getTime() - params.startsAt.getTime()) / (24 * 3600 * 1000)));
+
   return prisma.reservation.create({
-    data: { ...params, status: ReservationStatus.DRAFT },
+    data: {
+      customerName: params.customerName,
+      customerEmail: params.customerEmail,
+      customerPhone: params.customerPhone,
+      vehicleId: vehicle.id,
+      vehicleVin: vehicle.vin,
+      startsAt: params.startsAt,
+      endsAt: params.endsAt,
+      depositAmountCzk: days * vehicle.dailyPriceCzk,
+      kauceAmountCzk: vehicle.kauceAmountCzk,
+      status: ReservationStatus.DRAFT,
+    },
   });
 }
 
@@ -21,7 +49,6 @@ export async function getReservation(id: string) {
   return prisma.reservation.findUniqueOrThrow({ where: { id } });
 }
 
-/** Volá se hned po vytvoření platby zálohy/kauce na Comgate - ukládá transId a přepne na PENDING_PAYMENT. */
 export async function markPendingPayment(params: {
   reservationId: string;
   depositTransId?: string;
@@ -37,10 +64,6 @@ export async function markPendingPayment(params: {
   });
 }
 
-/**
- * Volá webhook, jakmile Comgate potvrdí, že ZÁROVEň záloha i kauce prošly.
- * Teprve tady je bezpečné vytvořit přístup k vozu (Tesla/FleetBold invite).
- */
 export async function findReservationByTransId(transId: string) {
   return prisma.reservation.findFirst({
     where: {
@@ -51,8 +74,6 @@ export async function findReservationByTransId(transId: string) {
 
 export async function isFullyPaid(reservationId: string) {
   const r = await getReservation(reservationId);
-  // Obě transakce musí existovat - konkrétní "zaplaceno" status ověřuje webhook
-  // handler přes getPaymentStatus() u obou transId před zavoláním markPaid().
   return Boolean(r.depositTransId && r.kauceTransId);
 }
 
@@ -70,7 +91,6 @@ export async function markPaymentFailed(reservationId: string) {
   });
 }
 
-/** Po vytvoření dočasného přístupu k vozu (FleetBold/Tesla invite) po úspěšné platbě. */
 export async function saveVehicleAccess(params: {
   reservationId: string;
   vehicleAccessId: string;
@@ -86,8 +106,6 @@ export async function saveVehicleAccess(params: {
   });
 }
 
-/** Pokud vytvoření přístupu selže - uloží se chyba, ale rezervace ZŮSTÁVÁ PAID (peníze má),
- *  takže je bezpečné akci později zopakovat (viz retryVehicleAccessCreation ve webhooku). */
 export async function saveVehicleAccessError(params: { reservationId: string; error: string }) {
   return prisma.reservation.update({
     where: { id: params.reservationId },
@@ -95,7 +113,6 @@ export async function saveVehicleAccessError(params: { reservationId: string; er
   });
 }
 
-/** Přechod na ACTIVE při skutečném převzetí vozu (appka odeslala "Odemknout"/"Převzato"). */
 export async function markActive(reservationId: string) {
   return prisma.reservation.update({
     where: { id: reservationId },
@@ -103,7 +120,6 @@ export async function markActive(reservationId: string) {
   });
 }
 
-/** Po odevzdání vozu zákazníkem (fotky nahrané, appka odeslala "ukončit"). */
 export async function markReturned(params: { reservationId: string; photoUrls: string[] }) {
   return prisma.reservation.update({
     where: { id: params.reservationId },
@@ -111,7 +127,6 @@ export async function markReturned(params: { reservationId: string; photoUrls: s
   });
 }
 
-/** Finální krok - kauce byla uvolněna nebo strhnuta, rezervace uzavřena. */
 export async function markSettled(params: { reservationId: string; damageNoteText?: string }) {
   return prisma.reservation.update({
     where: { id: params.reservationId },
