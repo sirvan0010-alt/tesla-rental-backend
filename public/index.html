@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tesla pronájem – rezervace</title>
+<style>
+  :root {
+    --accent: #d02b2b;
+    --text: #1a1a1a;
+    --muted: #666;
+    --bg: #fafafa;
+    --border: #ddd;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 24px 16px 60px;
+    font-size: 18px; /* větší default = čitelnější i pro méně technické/starší zákazníky */
+    line-height: 1.5;
+  }
+  .card {
+    max-width: 480px;
+    margin: 0 auto 20px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px;
+  }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .step-label { color: var(--muted); font-size: 15px; margin-bottom: 16px; }
+  label { display: block; font-weight: 600; margin: 14px 0 6px; }
+  input {
+    width: 100%;
+    padding: 14px;
+    font-size: 18px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  button {
+    width: 100%;
+    padding: 16px;
+    font-size: 19px;
+    font-weight: 700;
+    border: none;
+    border-radius: 12px;
+    background: var(--accent);
+    color: #fff;
+    margin-top: 20px;
+    cursor: pointer;
+  }
+  button:disabled { background: #ccc; cursor: not-allowed; }
+  .method-btn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 14px;
+    margin-top: 10px;
+    border: 2px solid var(--border);
+    border-radius: 10px;
+    background: #fff;
+    font-size: 17px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .method-btn.selected { border-color: var(--accent); background: #fff5f5; }
+  .method-btn img { width: 28px; height: 28px; object-fit: contain; }
+  .error { color: var(--accent); margin-top: 10px; font-weight: 600; }
+  .hint { color: var(--muted); font-size: 15px; margin-top: 8px; }
+  .status-pill {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: #eee;
+    font-size: 14px;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+
+<div class="card" id="step-details">
+  <h1>Rezervace vozu</h1>
+  <div class="step-label">Krok 1 z 3 · Vaše údaje</div>
+  <label for="name">Jméno a příjmení</label>
+  <input id="name" placeholder="Jan Novák" />
+  <label for="email">E-mail</label>
+  <input id="email" type="email" placeholder="jan@example.com" />
+  <label for="phone">Telefon</label>
+  <input id="phone" type="tel" placeholder="+420 600 123 456" />
+  <div class="hint">Termín i výše zálohy/kauce se u této rezervace nastavují automaticky podle vybraného vozu a data.</div>
+  <div class="error" id="details-error"></div>
+  <button onclick="submitDetails()">Pokračovat k platbě</button>
+</div>
+
+<div class="card" id="step-payment" style="display:none">
+  <h1>Platba</h1>
+  <div class="step-label">Krok 2 z 3 · Vyberte způsob platby</div>
+  <div id="methods-list"></div>
+  <div class="error" id="payment-error"></div>
+  <button id="pay-btn" disabled onclick="pay()">Zaplatit a zablokovat kauci</button>
+  <div class="hint">Záloha se strhne ihned, kauce se pouze zablokuje na kartě a po vrácení vozu se uvolní.</div>
+</div>
+
+<div class="card" id="step-waiting" style="display:none">
+  <h1>Zpracováváme platbu</h1>
+  <p>Až banka platbu potvrdí, tlačítko pro odemčení se zobrazí samo – stránku není třeba obnovovat.</p>
+  <div class="status-pill" id="status-pill">Čekání na potvrzení…</div>
+</div>
+
+<div class="card" id="step-unlock" style="display:none">
+  <h1>Vše připraveno 🎉</h1>
+  <p>Platba proběhla. V čase začátku rezervace stačí kliknout na tlačítko níže.</p>
+  <button onclick="unlock()">Odemknout vůz</button>
+  <div class="hint" id="unlock-hint"></div>
+</div>
+
+<script>
+  const API = "/api/payment";
+  let reservationId = null;
+  let selectedMethod = null;
+
+  async function submitDetails() {
+    const name = document.getElementById("name").value.trim();
+    const email = document.getElementById("email").value.trim();
+    const phone = document.getElementById("phone").value.trim();
+    const errBox = document.getElementById("details-error");
+    errBox.textContent = "";
+
+    if (!name || !email || !phone) {
+      errBox.textContent = "Vyplňte prosím všechna pole.";
+      return;
+    }
+
+    // Demo hodnoty vozu/termínu/částek - v appce se předvyplní z výběru rezervace
+    const now = new Date();
+    const starts = new Date(now.getTime() + 24 * 3600 * 1000);
+    const ends = new Date(now.getTime() + 3 * 24 * 3600 * 1000);
+
+    try {
+      const res = await fetch(`${API}/reservations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerName: name,
+          customerEmail: email,
+          customerPhone: phone,
+          vehicleVin: "DEMO-VIN-0001",
+          startsAt: starts.toISOString(),
+          endsAt: ends.toISOString(),
+          depositAmountCzk: 3000,
+          kauceAmountCzk: 20000,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      const reservation = await res.json();
+      reservationId = reservation.id;
+      await loadMethods();
+      show("step-payment");
+    } catch {
+      errBox.textContent = "Něco se nepovedlo, zkuste to prosím znovu.";
+    }
+  }
+
+  async function loadMethods() {
+    const list = document.getElementById("methods-list");
+    list.innerHTML = "Načítám platební metody…";
+    try {
+      const res = await fetch(`${API}/methods`);
+      const data = await res.json();
+      list.innerHTML = "";
+      data.methods.forEach((m) => {
+        const btn = document.createElement("button");
+        btn.className = "method-btn";
+        btn.innerHTML = (m.logoUrl ? `<img src="${m.logoUrl}" alt="">` : "") + `<span>${m.name}</span>`;
+        btn.onclick = () => selectMethod(m.id, btn);
+        list.appendChild(btn);
+      });
+    } catch {
+      list.innerHTML = '<div class="error">Platební metody se nepodařilo načíst.</div>';
+    }
+  }
+
+  function selectMethod(id, btn) {
+    selectedMethod = id;
+    document.querySelectorAll(".method-btn").forEach((b) => b.classList.remove("selected"));
+    btn.classList.add("selected");
+    document.getElementById("pay-btn").disabled = false;
+  }
+
+  async function pay() {
+    const errBox = document.getElementById("payment-error");
+    errBox.textContent = "";
+    const email = document.getElementById("email").value.trim();
+    try {
+      const deposit = await fetch(`${API}/deposit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reservationId,
+          amountCzk: 3000,
+          customerEmail: email,
+          method: selectedMethod,
+        }),
+      }).then((r) => r.json());
+
+      await fetch(`${API}/kauce`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reservationId, depositCzk: 20000, customerEmail: email }),
+      });
+
+      show("step-waiting");
+      pollStatus();
+
+      // Přesměrování na platební bránu pro dokončení platby zálohy
+      if (deposit.redirectUrl) window.location.href = deposit.redirectUrl;
+    } catch {
+      errBox.textContent = "Platbu se nepodařilo spustit, zkuste to prosím znovu.";
+    }
+  }
+
+  async function pollStatus() {
+    const pill = document.getElementById("status-pill");
+    const check = async () => {
+      const r = await fetch(`${API}/reservations/${reservationId}`);
+      const reservation = await r.json();
+      if (reservation.status === "PAID") {
+        document.getElementById("unlock-hint").textContent = reservation.vehicleUnlockUrl
+          ? ""
+          : "Přístup k vozu se ještě dokončuje, zkuste tlačítko za pár minut.";
+        show("step-unlock");
+        return;
+      }
+      if (reservation.status === "FAILED") {
+        pill.textContent = "Platba se nezdařila";
+        return;
+      }
+      pill.textContent = `Stav: ${reservation.status}`;
+      setTimeout(check, 3000);
+    };
+    check();
+  }
+
+  async function unlock() {
+    try {
+      const r = await fetch(`${API}/reservations/${reservationId}/activate`, { method: "POST" });
+      const data = await r.json();
+      if (!r.ok) {
+        document.getElementById("unlock-hint").textContent = data.error || "Zkuste to prosím znovu.";
+        return;
+      }
+      window.location.href = data.vehicleUnlockUrl || "#";
+    } catch {
+      document.getElementById("unlock-hint").textContent = "Odemčení se nepodařilo, zkuste to znovu.";
+    }
+  }
+
+  function show(id) {
+    ["step-details", "step-payment", "step-waiting", "step-unlock"].forEach(
+      (s) => (document.getElementById(s).style.display = s === id ? "block" : "none")
+    );
+  }
+</script>
+</body>
+</html>
