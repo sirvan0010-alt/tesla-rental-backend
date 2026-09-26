@@ -31,6 +31,13 @@ model Reservation {
   customerEmail String
   customerPhone String
 
+  // Doklady - uložené jako obyčejné soubory (NE šifrované), pro přímý přístup
+  // majitele při řešení škody/sporu. Přístup k nim jde přes admin endpoint
+  // chráněný API klíčem (viz routes/admin.ts) - k prohlížení se nepotřebuje
+  // žádný dešifrovací klíč, jen platný ADMIN_API_KEY.
+  driverLicensePhotoUrl String?
+  idCardPhotoUrl        String?
+
   // Termín a vůz
   vehicleVin String
   startsAt   DateTime

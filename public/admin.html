@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8" />
+<title>Admin – doklady k rezervaci</title>
+<style>
+  body { font-family: -apple-system, Arial, sans-serif; max-width: 520px; margin: 40px auto; padding: 0 16px; }
+  input { width: 100%; padding: 10px; margin: 6px 0 14px; font-size: 16px; }
+  button { padding: 10px 16px; font-size: 16px; cursor: pointer; }
+  img { max-width: 100%; border: 1px solid #ccc; border-radius: 8px; margin-top: 10px; }
+  .row { margin-bottom: 18px; }
+  .error { color: #c00; }
+</style>
+</head>
+<body>
+  <h1>Doklady k rezervaci</h1>
+  <label>ID rezervace</label>
+  <input id="resId" placeholder="např. clx1a2b3c...">
+  <label>Admin klíč</label>
+  <input id="adminKey" type="password" placeholder="ADMIN_API_KEY">
+  <button onclick="load()">Načíst</button>
+  <div id="out"></div>
+
+<script>
+  async function load() {
+    const id = document.getElementById("resId").value.trim();
+    const key = document.getElementById("adminKey").value.trim();
+    const out = document.getElementById("out");
+    out.innerHTML = "Načítám…";
+    try {
+      const res = await fetch(`/api/documents/${id}/view`, { headers: { "x-admin-key": key } });
+      if (!res.ok) throw new Error((await res.json()).error || "Chyba");
+      const d = await res.json();
+      out.innerHTML = `
+        <div class="row"><b>Jméno:</b> ${d.customerName}</div>
+        <div class="row"><b>E-mail:</b> ${d.customerEmail}</div>
+        <div class="row"><b>Telefon:</b> ${d.customerPhone}</div>
+        <div class="row"><b>Řidičský průkaz:</b><br>${
+          d.driverLicensePhotoUrl
+            ? `<img src="${d.driverLicensePhotoUrl}?key=${encodeURIComponent(key)}">`
+            : "nenahráno"
+        }</div>
+        <div class="row"><b>Občanský průkaz:</b><br>${
+          d.idCardPhotoUrl ? `<img src="${d.idCardPhotoUrl}?key=${encodeURIComponent(key)}">` : "nenahráno"
+        }</div>
+      `;
+    } catch (e) {
+      out.innerHTML = `<div class="error">${e.message}</div>`;
+    }
+  }
+</script>
+</body>
+</html>
