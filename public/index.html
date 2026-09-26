@@ -33,7 +33,7 @@
   h1 { font-size: 24px; margin: 0 0 4px; }
   .step-label { color: var(--muted); font-size: 15px; margin-bottom: 16px; }
   label { display: block; font-weight: 600; margin: 14px 0 6px; }
-  input {
+  input, select {
     width: 100%;
     padding: 14px;
     font-size: 18px;
@@ -83,9 +83,23 @@
 </head>
 <body>
 
-<div class="card" id="step-details">
+<div class="card" id="step-vehicle">
   <h1>Rezervace vozu</h1>
-  <div class="step-label">Krok 1 z 3 · Vaše údaje</div>
+  <div class="step-label">Krok 1 z 4 · Vyberte vůz a termín</div>
+  <label for="vehicle">Vůz</label>
+  <select id="vehicle"></select>
+  <label for="starts">Od</label>
+  <input id="starts" type="date" />
+  <label for="ends">Do</label>
+  <input id="ends" type="date" />
+  <div class="error" id="vehicle-error"></div>
+  <div class="hint" id="price-hint"></div>
+  <button onclick="checkAvailability()">Pokračovat</button>
+</div>
+
+<div class="card" id="step-details" style="display:none">
+  <h1>Rezervace vozu</h1>
+  <div class="step-label">Krok 2 z 4 · Vaše údaje</div>
   <label for="name">Jméno a příjmení</label>
   <input id="name" placeholder="Jan Novák" />
   <label for="email">E-mail</label>
@@ -96,14 +110,13 @@
   <input id="license" type="file" accept="image/*" capture="environment" />
   <label for="idcard">Fotka občanského průkazu (volitelné)</label>
   <input id="idcard" type="file" accept="image/*" capture="environment" />
-  <div class="hint">Termín i výše zálohy/kauce se u této rezervace nastavují automaticky podle vybraného vozu a data.</div>
   <div class="error" id="details-error"></div>
   <button onclick="submitDetails()">Pokračovat k platbě</button>
 </div>
 
 <div class="card" id="step-payment" style="display:none">
   <h1>Platba</h1>
-  <div class="step-label">Krok 2 z 3 · Vyberte způsob platby</div>
+  <div class="step-label">Krok 3 z 4 · Vyberte způsob platby</div>
   <div id="methods-list"></div>
   <div class="error" id="payment-error"></div>
   <button id="pay-btn" disabled onclick="pay()">Zaplatit a zablokovat kauci</button>
@@ -142,6 +155,63 @@
   const API = "/api/payment";
   let reservationId = null;
   let selectedMethod = null;
+  let selectedVehicleId = null;
+  let selectedStarts = null;
+  let selectedEnds = null;
+
+  async function loadVehicles() {
+    const select = document.getElementById("vehicle");
+    try {
+      const res = await fetch("/api/vehicles");
+      const data = await res.json();
+      select.innerHTML = data.vehicles
+        .map((v) => `<option value="${v.id}">${v.name} - ${v.dailyPriceCzk} Kč/den</option>`)
+        .join("");
+    } catch {
+      select.innerHTML = "";
+      document.getElementById("vehicle-error").textContent = "Vozy se nepodařilo načíst.";
+    }
+  }
+  loadVehicles();
+
+  async function checkAvailability() {
+    const errBox = document.getElementById("vehicle-error");
+    const priceHint = document.getElementById("price-hint");
+    errBox.textContent = "";
+    priceHint.textContent = "";
+
+    const vehicleId = document.getElementById("vehicle").value;
+    const startsStr = document.getElementById("starts").value;
+    const endsStr = document.getElementById("ends").value;
+    if (!vehicleId || !startsStr || !endsStr) {
+      errBox.textContent = "Vyberte prosím vůz a oba termíny.";
+      return;
+    }
+    const starts = new Date(startsStr + "T10:00:00");
+    const ends = new Date(endsStr + "T10:00:00");
+    if (ends <= starts) {
+      errBox.textContent = "Datum konce musí být po datu začátku.";
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `/api/vehicles/${vehicleId}/availability?start=${starts.toISOString()}&end=${ends.toISOString()}`
+      );
+      const data = await res.json();
+      if (!data.available) {
+        errBox.textContent = "Vůz je v tomto termínu bohužel obsazený, zkuste jiný termín.";
+        return;
+      }
+      selectedVehicleId = vehicleId;
+      selectedStarts = starts;
+      selectedEnds = ends;
+      priceHint.textContent = `Záloha: ${data.depositAmountCzk} Kč, kauce: ${data.kauceAmountCzk} Kč`;
+      show("step-details");
+    } catch {
+      errBox.textContent = "Dostupnost se nepodařilo ověřit, zkuste to prosím znovu.";
+    }
+  }
 
   async function submitDetails() {
     const name = document.getElementById("name").value.trim();
@@ -160,9 +230,10 @@
       return;
     }
 
-    const now = new Date();
-    const starts = new Date(now.getTime() + 24 * 3600 * 1000);
-    const ends = new Date(now.getTime() + 3 * 24 * 3600 * 1000);
+    if (!selectedVehicleId || !selectedStarts || !selectedEnds) {
+      errBox.textContent = "Nejdřív vyberte vůz a termín.";
+      return;
+    }
 
     try {
       const res = await fetch(`${API}/reservations`, {
@@ -172,16 +243,15 @@
           customerName: name,
           customerEmail: email,
           customerPhone: phone,
-          vehicleVin: "DEMO-VIN-0001",
-          startsAt: starts.toISOString(),
-          endsAt: ends.toISOString(),
-          depositAmountCzk: 3000,
-          kauceAmountCzk: 20000,
+          vehicleId: selectedVehicleId,
+          startsAt: selectedStarts.toISOString(),
+          endsAt: selectedEnds.toISOString(),
         }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) throw new Error((await res.json()).error || "Rezervaci se nepodařilo založit");
       const reservation = await res.json();
       reservationId = reservation.id;
+      window.currentReservation = reservation;
 
       const formData = new FormData();
       formData.append("driverLicense", licenseFile);
@@ -230,13 +300,14 @@
     const errBox = document.getElementById("payment-error");
     errBox.textContent = "";
     const email = document.getElementById("email").value.trim();
+    const reservation = window.currentReservation;
     try {
       const deposit = await fetch(`${API}/deposit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           reservationId,
-          amountCzk: 3000,
+          amountCzk: reservation.depositAmountCzk,
           customerEmail: email,
           method: selectedMethod,
         }),
@@ -245,7 +316,11 @@
       await fetch(`${API}/kauce`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reservationId, depositCzk: 20000, customerEmail: email }),
+        body: JSON.stringify({
+          reservationId,
+          depositCzk: reservation.kauceAmountCzk,
+          customerEmail: email,
+        }),
       });
 
       show("step-waiting");
@@ -316,9 +391,15 @@
   }
 
   function show(id) {
-    ["step-details", "step-payment", "step-waiting", "step-unlock", "step-return", "step-done"].forEach(
-      (s) => (document.getElementById(s).style.display = s === id ? "block" : "none")
-    );
+    [
+      "step-vehicle",
+      "step-details",
+      "step-payment",
+      "step-waiting",
+      "step-unlock",
+      "step-return",
+      "step-done",
+    ].forEach((s) => (document.getElementById(s).style.display = s === id ? "block" : "none"));
   }
 </script>
 </body>
