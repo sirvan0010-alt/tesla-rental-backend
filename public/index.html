@@ -19,7 +19,7 @@
     color: var(--text);
     margin: 0;
     padding: 24px 16px 60px;
-    font-size: 18px; /* větší default = čitelnější i pro méně technické/starší zákazníky */
+    font-size: 18px;
     line-height: 1.5;
   }
   .card {
@@ -121,6 +121,21 @@
   <p>Platba proběhla. V čase začátku rezervace stačí kliknout na tlačítko níže.</p>
   <button onclick="unlock()">Odemknout vůz</button>
   <div class="hint" id="unlock-hint"></div>
+  <button style="background:#333;margin-top:30px" onclick="show('step-return')">Vracím vůz</button>
+</div>
+
+<div class="card" id="step-return" style="display:none">
+  <h1>Vrácení vozu</h1>
+  <div class="step-label">Nahrajte prosím pár fotek vozu (exteriér + interiér)</div>
+  <label for="return-photos">Fotky vozu</label>
+  <input id="return-photos" type="file" accept="image/*" capture="environment" multiple />
+  <div class="error" id="return-error"></div>
+  <button onclick="submitReturn()">Potvrdit vrácení</button>
+</div>
+
+<div class="card" id="step-done" style="display:none">
+  <h1>Děkujeme!</h1>
+  <p>Vůz byl označen jako vrácený. Kauce se uvolní po kontrole – do pár dní vám přijde potvrzení.</p>
 </div>
 
 <script>
@@ -145,7 +160,6 @@
       return;
     }
 
-    // Demo hodnoty vozu/termínu/částek - v appce se předvyplní z výběru rezervace
     const now = new Date();
     const starts = new Date(now.getTime() + 24 * 3600 * 1000);
     const ends = new Date(now.getTime() + 3 * 24 * 3600 * 1000);
@@ -237,7 +251,6 @@
       show("step-waiting");
       pollStatus();
 
-      // Přesměrování na platební bránu pro dokončení platby zálohy
       if (deposit.redirectUrl) window.location.href = deposit.redirectUrl;
     } catch {
       errBox.textContent = "Platbu se nepodařilo spustit, zkuste to prosím znovu.";
@@ -280,8 +293,30 @@
     }
   }
 
+  async function submitReturn() {
+    const errBox = document.getElementById("return-error");
+    errBox.textContent = "";
+    const files = document.getElementById("return-photos").files;
+    if (!files.length) {
+      errBox.textContent = "Nahrajte prosím alespoň jednu fotku.";
+      return;
+    }
+    const formData = new FormData();
+    for (const f of files) formData.append("photos", f);
+    try {
+      const res = await fetch(`/api/documents/${reservationId}/return-photos`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) throw new Error();
+      show("step-done");
+    } catch {
+      errBox.textContent = "Nahrání fotek se nepodařilo, zkuste to prosím znovu.";
+    }
+  }
+
   function show(id) {
-    ["step-details", "step-payment", "step-waiting", "step-unlock"].forEach(
+    ["step-details", "step-payment", "step-waiting", "step-unlock", "step-return", "step-done"].forEach(
       (s) => (document.getElementById(s).style.display = s === id ? "block" : "none")
     );
   }
