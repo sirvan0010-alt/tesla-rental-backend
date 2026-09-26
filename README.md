@@ -36,6 +36,7 @@ u půjčoven.
 ```
 prisma/schema.prisma          - model Reservation + stavový enum
 public/index.html              - minimální frontend pro zákazníka (viz níže)
+public/admin.html              - admin prohlížení dokladů
 src/
   db.ts                       - Prisma client
   paymentService.ts           - veškerá komunikace s Comgate (metody, záloha, kauce)
@@ -51,95 +52,76 @@ src/
 Jedna statická stránka bez frameworku (čistý HTML/JS), servírovaná
 přímo Express serverem na `http://localhost:3000/`. Tři kroky:
 
-1. **Údaje** - jméno, e-mail, telefon → založí rezervaci (`POST /reservations`)
+1. **Údaje** - jméno, e-mail, telefon + povinná fotka řidičáku (občanka volitelně)
+   → založí rezervaci a nahraje doklady
 2. **Platba** - tlačítka se seznamem metod natažená live z `/api/payment/methods`
-   (karty, Google Pay, konkrétní banky - žádný natvrdo zadrátovaný seznam),
-   po výběru zaplatí zálohu i zablokuje kauci
-3. **Čekání → Odemknout** - stránka sama pollingem (`GET /reservations/:id`
-   každé 3 s) čeká na `PAID` a pak zobrazí velké tlačítko "Odemknout vůz"
-   (volá `POST /reservations/:id/activate`)
+3. **Čekání → Odemknout** - polling na `PAID`, pak tlačítko "Odemknout vůz"
 
-Cíleně velké písmo, velké dotykové plochy a jen tři kroky - odpovídá
-požadavku "zvládne i důchodce". VIN vozu a částky zálohy/kauce jsou
-v demu zapsané napevno v kódu (`DEMO-VIN-0001`, 3000/20000 Kč) - v
-reálném provozu je nahradíte předvyplněním z konkrétní vybrané rezervace
-(krok "výběr termínu", který zatím tahle appka neřeší).
+## Doklady zákazníka (řidičák/občanka)
+
+Ukládají se jako **běžné soubory, bez šifrování** - záměrně, na výslovné
+přání, aby k nim majitel měl přímý přístup bez správy šifrovacích klíčů.
+
+- Soubory leží na disku ve `uploads/documents/` (v `.gitignore`, není veřejný static)
+- Přístup jen přes admin middleware (`ADMIN_API_KEY`)
+- Na produkci doporučen šifrovaný disk (LUKS/BitLocker/cloud disk encryption)
+
+**Endpointy (vyžadují backend implementaci – viz poznámka níže):**
+
+| Metoda | Cesta | Účel |
+|---|---|---|
+| POST | /api/documents/:id/upload | zákazník nahraje foto ŘP (povinné) + OP (volitelné) |
+| GET | /api/documents/:id/view | admin JSON s odkazy na doklady (x-admin-key) |
+| GET | /uploads/documents/... | soubory fotek (chráněno admin klíčem) |
+
+**`public/admin.html`** – ID rezervace + admin klíč → jméno, kontakt, fotky.
 
 ## Model rezervace a stavy
-
-`Reservation` drží zákazníka, termín, vůz, částky (záloha/kauce), a klíčové
-`depositTransId` / `kauceTransId` z Comgate + `vehicleAccessId` (a případně
-`vehicleAccessError`) pro napojení na přístup k vozu.
 
 ```
 DRAFT -> PENDING_PAYMENT -> PAID -> ACTIVE -> RETURNED -> SETTLED
                  \-> FAILED          (nebo CANCELLED z DRAFT)
 ```
 
-- **DRAFT**: založeno, čeká na platbu
-- **PENDING_PAYMENT**: platba/kauce odeslána na Comgate, čeká se na webhook
-- **PAID**: záloha i kauce potvrzeny -> webhook rovnou zkusí vytvořit přístup k vozu
-- **ACTIVE**: zákazník skutečně odemkl/převzal vůz (appka zavolá endpoint převzetí)
-- **RETURNED**: vůz vrácen, čeká se na kontrolu fotek/telemetrie
-- **SETTLED**: kauce uvolněna/strhnuta, rezervace uzavřena
-
-Webhook (`/api/payment/webhook`) si stav vždy ověří zpět přes
-`getPaymentStatus(transId)` - nevěří jen obsahu notifikace (ochrana proti
-podvržení). Na `PAID` přepne rezervaci teprve když jsou evidované OBĚ
-transakce (záloha i kauce), viz `isFullyPaid()`, a rovnou zavolá
-`ensureVehicleAccess()`.
-
-### Co dělá `ensureVehicleAccess()` a proč je to bezpečné
-
-1. Pokud rezervace už `vehicleAccessId` má, nic nedělá (idempotence -
-   webhook od Comgate může dorazit i vícekrát).
-2. Zavolá `vehicleAccessService.createVehicleAccess()` (FleetBold/Tesla).
-3. Při úspěchu uloží `vehicleAccessId` a pošle e-mail/SMS.
-4. **Při selhání** (výpadek FleetBold API apod.) se chyba uloží do
-   `vehicleAccessError`, ale rezervace ZŮSTÁVÁ `PAID` - zákazník má
-   zaplaceno, jen zatím nemá přístup. Nic se nevrací, nic se neruší.
-   Přístup lze kdykoliv dodatečně vytvořit přes
-   `POST /api/payment/reservations/:id/retry-access` (ručně, nebo
-   later přes cron job, který projede rezervace s `vehicleAccessError != null`).
-
-## Endpointy
+## Endpointy (platby)
 
 | Metoda | Cesta | Účel |
 |---|---|---|
 | POST | /api/payment/reservations | založení rezervace (DRAFT) |
-| GET | /api/payment/reservations/:id | stav rezervace pro frontend |
-| POST | /api/payment/reservations/:id/activate | přepne rezervaci na ACTIVE, když zákazník klikne "Odemknout" |
-| POST | /api/payment/reservations/:id/retry-access | ruční/cron retry vytvoření přístupu k vozu |
-| GET | /api/payment/methods | seznam aktuálně dostupných platebních metod/bank |
-| POST | /api/payment/deposit | platba zálohy zvolenou metodou (uloží depositTransId) |
-| POST | /api/payment/kauce | blokace kauce - pre-auth (uloží kauceTransId) |
-| POST | /api/payment/kauce/:transId/release | uvolnění kauce po vrácení bez škody |
-| POST | /api/payment/kauce/:transId/capture | strhnutí kauce (celé/části) při škodě |
-| POST | /api/payment/webhook | notifikace od Comgate -> ověří stav -> posune rezervaci -> vytvoří přístup |
-| GET | /api/payment/:transId/status | dotaz na stav platby (polling) |
+| GET | /api/payment/reservations/:id | stav rezervace |
+| POST | /api/payment/reservations/:id/activate | PAID → ACTIVE |
+| POST | /api/payment/reservations/:id/retry-access | retry přístupu k vozu |
+| GET | /api/payment/methods | platební metody |
+| POST | /api/payment/deposit | záloha |
+| POST | /api/payment/kauce | pre-auth kauce |
+| POST | /api/payment/kauce/:transId/release | uvolnění kauce |
+| POST | /api/payment/kauce/:transId/capture | strhnutí kauce |
+| POST | /api/payment/webhook | Comgate notifikace |
+| GET | /api/payment/:transId/status | stav platby |
 
 ## Nastavení
 
-1. `cp .env.example .env` a doplnit merchant ID + secret z Comgate administrace,
-   `DATABASE_URL` a `VEHICLE_ACCESS_API_URL`/`VEHICLE_ACCESS_API_KEY`
+1. `cp .env.example .env` – doplnit Comgate, DATABASE_URL, VEHICLE_ACCESS_*, **ADMIN_API_KEY**
 2. `npm install`
-3. `npm run prisma:migrate` (vytvoří tabulku `Reservation` v PostgreSQL)
-4. V Comgate administraci nastavit notifikační URL na `/api/payment/webhook`
+3. `npm run prisma:migrate`
+4. Comgate notifikační URL → `/api/payment/webhook`
 5. `npm run dev`
 
-## Co doplnit dál
+## Co doplnit dál (backend pro doklady)
 
-- **`vehicleAccessService.ts`**: tvar requestu na `/v1/guest-keys` je návrh
-  podle typického chování těchto služeb - jakmile se zaregistrujete u
-  FleetBold (nebo zvolíte jinou platformu/Tessie/vlastní Fleet API
-  middleware), upravte jen tenhle soubor podle jejich skutečné dokumentace.
-  Zbytek appky se nemění.
-- **`notificationService.ts`**: nahradit `console.log` skutečným
-  voláním SendGrid/Mailgun (e-mail) a Twilio/O2 SMS Gateway (SMS)
-- **`public/index.html`**: je to funkční demo pro test end-to-end toku, ne
-  hotový produkční web - chybí krok "výběr termínu/vozu" (viz krok 1 v
-  celkovém plánu), našeptávač validace telefonu/e-mailu a napojení na
-  reálné foto dokladů. VIN a částky jsou zatím napevno v kódu.
-- Endpointy pro přechod ACTIVE -> RETURNED -> SETTLED (upload fotek při
-  vrácení, propojení s `releaseDepositHold`/`captureDepositHold`)
-- Testovací (sandbox) platby přes `COMGATE_TEST=true`
+Frontend a schema už doklady očekávají. **Ještě chybí v repozitáři:**
+
+- `src/routes/documents.ts` – upload + view endpointy
+- `src/middleware/adminAuth.ts` – kontrola `x-admin-key` / `?key=`
+- úprava `src/server.ts` – napojení routes + chráněný přístup k `/uploads`
+- `multer` (nebo ekvivalent) v `package.json` pro multipart upload
+- `ADMIN_API_KEY` v `.env.example`
+
+Bez těchto souborů frontend při nahrání dokladu selže. Pošlete je, nebo je můžu doplnit.
+
+## Co dál (produkt)
+
+- výběr termínu/vozu
+- ACTIVE → RETURNED → SETTLED + fotky při vrácení
+- reálné notifikace (e-mail/SMS)
+- napojení Tesla/FleetBold podle partnerské dokumentace
