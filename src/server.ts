@@ -3,12 +3,19 @@ import path from "path";
 import express from "express";
 import cors from "cors";
 import paymentRouter from "./routes/payment";
+import documentsRouter from "./routes/documents";
+import { requireAdminKey } from "./middleware/adminAuth";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 app.use("/api/payment", paymentRouter);
+app.use("/api/documents", documentsRouter);
+
+// Nahrané fotky dokladů NEJSOU veřejné - stejný x-admin-key jako /api/documents/:id/view
+app.use("/uploads/documents", requireAdminKey, express.static(path.join(__dirname, "..", "uploads", "documents")));
+
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
