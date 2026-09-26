@@ -35,6 +35,7 @@ u půjčoven.
 
 ```
 prisma/schema.prisma          - model Reservation + stavový enum
+public/index.html              - minimální frontend pro zákazníka (viz níže)
 src/
   db.ts                       - Prisma client
   paymentService.ts           - veškerá komunikace s Comgate (metody, záloha, kauce)
@@ -42,8 +43,27 @@ src/
   services/vehicleAccessService.ts - vytvoření/zrušení dočasného přístupu k vozu (FleetBold apod.)
   services/notificationService.ts  - odeslání instrukcí zákazníkovi (e-mail/SMS - zatím stub)
   routes/payment.ts           - REST endpointy pro frontend appku
-  server.ts                   - Express server
+  server.ts                   - Express server (servíruje i public/)
 ```
+
+## Frontend pro zákazníka (`public/index.html`)
+
+Jedna statická stránka bez frameworku (čistý HTML/JS), servírovaná
+přímo Express serverem na `http://localhost:3000/`. Tři kroky:
+
+1. **Údaje** - jméno, e-mail, telefon → založí rezervaci (`POST /reservations`)
+2. **Platba** - tlačítka se seznamem metod natažená live z `/api/payment/methods`
+   (karty, Google Pay, konkrétní banky - žádný natvrdo zadrátovaný seznam),
+   po výběru zaplatí zálohu i zablokuje kauci
+3. **Čekání → Odemknout** - stránka sama pollingem (`GET /reservations/:id`
+   každé 3 s) čeká na `PAID` a pak zobrazí velké tlačítko "Odemknout vůz"
+   (volá `POST /reservations/:id/activate`)
+
+Cíleně velké písmo, velké dotykové plochy a jen tři kroky - odpovídá
+požadavku "zvládne i důchodce". VIN vozu a částky zálohy/kauce jsou
+v demu zapsané napevno v kódu (`DEMO-VIN-0001`, 3000/20000 Kč) - v
+reálném provozu je nahradíte předvyplněním z konkrétní vybrané rezervace
+(krok "výběr termínu", který zatím tahle appka neřeší).
 
 ## Model rezervace a stavy
 
@@ -88,6 +108,7 @@ transakce (záloha i kauce), viz `isFullyPaid()`, a rovnou zavolá
 |---|---|---|
 | POST | /api/payment/reservations | založení rezervace (DRAFT) |
 | GET | /api/payment/reservations/:id | stav rezervace pro frontend |
+| POST | /api/payment/reservations/:id/activate | přepne rezervaci na ACTIVE, když zákazník klikne "Odemknout" |
 | POST | /api/payment/reservations/:id/retry-access | ruční/cron retry vytvoření přístupu k vozu |
 | GET | /api/payment/methods | seznam aktuálně dostupných platebních metod/bank |
 | POST | /api/payment/deposit | platba zálohy zvolenou metodou (uloží depositTransId) |
@@ -115,6 +136,10 @@ transakce (záloha i kauce), viz `isFullyPaid()`, a rovnou zavolá
   Zbytek appky se nemění.
 - **`notificationService.ts`**: nahradit `console.log` skutečným
   voláním SendGrid/Mailgun (e-mail) a Twilio/O2 SMS Gateway (SMS)
+- **`public/index.html`**: je to funkční demo pro test end-to-end toku, ne
+  hotový produkční web - chybí krok "výběr termínu/vozu" (viz krok 1 v
+  celkovém plánu), našeptávač validace telefonu/e-mailu a napojení na
+  reálné foto dokladů. VIN a částky jsou zatím napevno v kódu.
 - Endpointy pro přechod ACTIVE -> RETURNED -> SETTLED (upload fotek při
   vrácení, propojení s `releaseDepositHold`/`captureDepositHold`)
 - Testovací (sandbox) platby přes `COMGATE_TEST=true`
