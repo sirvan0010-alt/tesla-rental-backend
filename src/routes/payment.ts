@@ -17,6 +17,7 @@ import {
   markPaymentFailed,
   saveVehicleAccess,
   saveVehicleAccessError,
+  markActive,
 } from "../services/reservationService";
 import { createVehicleAccess } from "../services/vehicleAccessService";
 import { sendAccessInstructions } from "../services/notificationService";
@@ -86,7 +87,11 @@ async function ensureVehicleAccess(reservationId: string) {
       startsAt: reservation.startsAt,
       endsAt: reservation.endsAt,
     });
-    await saveVehicleAccess({ reservationId, vehicleAccessId: access.accessId });
+    await saveVehicleAccess({
+      reservationId,
+      vehicleAccessId: access.accessId,
+      vehicleUnlockUrl: access.unlockUrl,
+    });
     await sendAccessInstructions({
       customerEmail: reservation.customerEmail,
       customerPhone: reservation.customerPhone,
@@ -258,6 +263,34 @@ router.get("/:transId/status", async (req, res) => {
     res.json(status);
   } catch (err) {
     res.status(502).json({ error: "Nepodařilo se zjistit stav platby" });
+  }
+});
+
+/**
+ * POST /api/payment/reservations/:id/activate
+ * Volá appka, když zákazník poprvé klikne "Odemknout vůz". Jen ověří,
+ * že rezervace je opravdu PAID a má vytvořený přístup, a přepne ji na
+ * ACTIVE (samotné odemčení fyzicky provádí FleetBold/Tesla appka -
+ * tenhle endpoint jen posouvá stav rezervace v naší databázi).
+ */
+router.post("/reservations/:id/activate", async (req, res) => {
+  try {
+    const reservation = await getReservation(req.params.id);
+    if (reservation.status !== "PAID") {
+      return res.status(409).json({ error: "Rezervace není ve stavu PAID" });
+    }
+    if (!reservation.vehicleAccessId) {
+      return res.status(409).json({
+        error: "Přístup k vozu zatím není připraven, zkuste to za chvíli",
+      });
+    }
+    const updated = await markActive(reservation.id);
+    res.json({
+      ...updated,
+      vehicleUnlockUrl: reservation.vehicleUnlockUrl,
+    });
+  } catch (err) {
+    res.status(404).json({ error: "Rezervace nenalezena" });
   }
 });
 
