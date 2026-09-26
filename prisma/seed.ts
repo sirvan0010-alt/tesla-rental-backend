@@ -3,23 +3,27 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 /**
- * Jednorázově naplní tabulku Vehicle. Spouští se přes `npm run prisma:seed`.
- * Přidejte/upravte položky podle skutečné flotily - VIN musí sedět s tím,
- * co máte zaregistrované ve FleetBold.
+ * Seed flotily — Tesla Model Y Performance 2023, bílý interiér, Prostějov.
+ * Upravte VIN na skutečný, až budete mít auto ve FleetBold.
  */
 async function main() {
   await prisma.vehicle.upsert({
-    where: { vin: "5YJ3E1EA000000001" },
-    update: {},
-    create: {
-      vin: "5YJ3E1EA000000001",
-      name: "Tesla Model 3 Long Range - bílá",
+    where: { vin: "7SAYGDEE0PF000001" },
+    update: {
+      name: "Tesla Model Y Performance 2023 — bílý interiér (Prostějov)",
       active: true,
-      dailyPriceCzk: 2500,
+      dailyPriceCzk: 3500,
+      kauceAmountCzk: 20000,
+    },
+    create: {
+      vin: "7SAYGDEE0PF000001",
+      name: "Tesla Model Y Performance 2023 — bílý interiér (Prostějov)",
+      active: true,
+      dailyPriceCzk: 3500,
       kauceAmountCzk: 20000,
     },
   });
-  console.log("Vehicle seed hotov.");
+  console.log("Vehicle seed hotov: Tesla Y Performance Prostějov.");
 }
 
 main()

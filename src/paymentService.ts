@@ -1,37 +1,44 @@
-import ComgateClient from "comgate-node";
-
 /**
- * Payment service pro Tesla pronájem.
+ * Payment service — Comgate + MOCK_MODE.
  *
- * Comgate v jedné integraci pokrývá vše, co zákazník očekává na výběr:
- * - platební karty
- * - Google Pay / Apple Pay
- * - "bankovní tlačítka" (přímé přihlášení do internetového bankovnictví)
- *   pro většinu českých bank (ČSOB, KB, Fio, Raiffeisenbank, Moneta, Air Bank, ...)
- *
- * Nemusíme tedy integrovat každou banku zvlášť - Comgate má endpoint `methods`,
- * který vrátí seznam aktuálně dostupných metod/bank pro danou zemi a měnu.
- * Frontend jen vykreslí tlačítka podle toho, co endpoint vrátí.
+ * MOCK_MODE=true (výchozí bez reálných klíčů): žádné volání Comgate,
+ * platby se simulují lokálně. Webhook se volá interně po create.
+ * Po registraci u Comgate nastavte MOCK_MODE=false + merchant/secret.
  */
 
-const comgateClient = new ComgateClient({
-  merchant: Number(process.env.COMGATE_MERCHANT_ID),
-  secret: process.env.COMGATE_SECRET as string,
-  test: process.env.COMGATE_TEST === "true",
-});
+const MOCK = process.env.MOCK_MODE === "true" || !process.env.COMGATE_SECRET || process.env.COMGATE_SECRET === "change-me";
 
 export interface PaymentMethod {
-  id: string; // e.g. "CARD_CZ_CSOB", "GPAY", "BANK_CS"
+  id: string;
   name: string;
   logoUrl?: string;
 }
 
-/** Vrátí zákazníkovi aktuální seznam metod (karty, Google Pay, konkrétní banky). */
-export async function listAvailablePaymentMethods(): Promise<PaymentMethod[]> {
-  const response = await comgateClient.methods({
-    curr: "CZK",
-    country: "CZ",
+function mockTransId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+let comgateClient: any = null;
+if (!MOCK) {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const ComgateClient = require("comgate-node").default;
+  comgateClient = new ComgateClient({
+    merchant: Number(process.env.COMGATE_MERCHANT_ID),
+    secret: process.env.COMGATE_SECRET as string,
+    test: process.env.COMGATE_TEST === "true",
   });
+}
+
+export async function listAvailablePaymentMethods(): Promise<PaymentMethod[]> {
+  if (MOCK) {
+    return [
+      { id: "CARD_ALL", name: "Platební karta (MOCK)" },
+      { id: "GPAY", name: "Google Pay (MOCK)" },
+      { id: "BANK_CS", name: "Česká spořitelna (MOCK)" },
+      { id: "BANK_FIO", name: "Fio banka (MOCK)" },
+    ];
+  }
+  const response = await comgateClient.methods({ curr: "CZK", country: "CZ" });
   return response.methods.map((m: any) => ({
     id: m.id,
     name: m.name,
@@ -39,24 +46,29 @@ export async function listAvailablePaymentMethods(): Promise<PaymentMethod[]> {
   }));
 }
 
-/**
- * Vytvoří platbu zálohy (běžná platba - peníze se rovnou strhnou).
- * `method` je id vybrané zákazníkem z listAvailablePaymentMethods(), nebo "ALL"
- * pokud chcete nechat výběr metody přímo na bráně Comgate.
- *
- * `refId` (= reservationId) se vrátí Comgate webhookem zpět, takže podle něj
- * webhook handler najde správnou rezervaci v databázi (viz routes/payment.ts).
- */
 export async function createDepositPayment(params: {
   reservationId: string;
   amountCzk: number;
   customerEmail: string;
   method?: string;
 }) {
-  const response = await comgateClient.create({
+  if (MOCK) {
+    const transId = mockTransId("DEP");
+    console.log(`[MOCK] deposit ${params.amountCzk} Kč, transId=${transId}`);
+    // Simulace webhooku za 1,5 s — frontend stihne pollovat
+    setTimeout(() => {
+      fetch(`http://127.0.0.1:${process.env.PORT || 3000}/api/payment/webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transId, refId: params.reservationId }),
+      }).catch((e) => console.warn("[MOCK] webhook deposit failed", e.message));
+    }, 1500);
+    return { transId, redirect: null, code: 0 };
+  }
+  return comgateClient.create({
     country: "CZ",
     curr: "CZK",
-    price: Math.round(params.amountCzk * 100), // Comgate pracuje v haléřích
+    price: Math.round(params.amountCzk * 100),
     label: `Zaloha - rezervace ${params.reservationId}`,
     refId: params.reservationId,
     method: params.method ?? "ALL",
@@ -64,48 +76,54 @@ export async function createDepositPayment(params: {
     lang: "cs",
     prepareOnly: false,
   });
-  // response.redirect - kam přesměrovat zákazníka k dokončení platby
-  // response.transId - Comgate transaction id, uložit k rezervaci
-  return response;
 }
 
-/**
- * Vytvoří kauci jako PRE-AUTH (peníze se na kartě jen zablokují, nestrhnou).
- * Funguje pouze pro platby kartou / Google Pay / Apple Pay (bankovní tlačítka
- * pre-auth nepodporují - o tom viz poznámka níže).
- */
 export async function createDepositHold(params: {
   reservationId: string;
   depositCzk: number;
   customerEmail: string;
 }) {
-  const response = await comgateClient.create({
+  if (MOCK) {
+    const transId = mockTransId("KAU");
+    console.log(`[MOCK] kauce hold ${params.depositCzk} Kč, transId=${transId}`);
+    setTimeout(() => {
+      fetch(`http://127.0.0.1:${process.env.PORT || 3000}/api/payment/webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transId, refId: params.reservationId }),
+      }).catch((e) => console.warn("[MOCK] webhook kauce failed", e.message));
+    }, 2000);
+    return { transId, redirect: null, code: 0 };
+  }
+  return comgateClient.create({
     country: "CZ",
     curr: "CZK",
     price: Math.round(params.depositCzk * 100),
     label: `Kauce (blokace) - rezervace ${params.reservationId}`,
     refId: `${params.reservationId}-DEPOSIT`,
-    // Omezit metody jen na ty, které pre-auth podporují (karty + wallets)
     method: "CARD_ALL",
     email: params.customerEmail,
     lang: "cs",
     prepareOnly: false,
-    // preauth se řídí konfigurací merchanta v Comgate administraci
-    // (nastavuje se tarif/metoda jako "preauth" tam, ne per-request flag)
   });
-  return response;
 }
 
-/** Po vrácení vozu bez škody: kauce se NEstrhne, jen se zruší blokace. */
 export async function releaseDepositHold(comgateTransId: string) {
+  if (MOCK) {
+    console.log(`[MOCK] release kauce ${comgateTransId}`);
+    return { code: 0 };
+  }
   return comgateClient.cancelPreauth({ transId: comgateTransId });
 }
 
-/** Po vrácení vozu se škodou/pokutou: reálně strhne část nebo celou kauci. */
 export async function captureDepositHold(params: {
   comgateTransId: string;
   amountCzk: number;
 }) {
+  if (MOCK) {
+    console.log(`[MOCK] capture kauce ${params.comgateTransId} amount=${params.amountCzk}`);
+    return { code: 0 };
+  }
   return comgateClient.capturePreauth({
     transId: params.comgateTransId,
     amount: Math.round(params.amountCzk * 100),
@@ -113,7 +131,10 @@ export async function captureDepositHold(params: {
   });
 }
 
-/** Zjištění aktuálního stavu platby/kauce (pro polling nebo dashboard). */
 export async function getPaymentStatus(comgateTransId: string) {
+  if (MOCK) {
+    // V mocku jsou všechny známé transId ihned PAID/AUTHORIZED
+    return { status: comgateTransId.startsWith("KAU") ? "AUTHORIZED" : "PAID", transId: comgateTransId };
+  }
   return comgateClient.status({ transId: comgateTransId });
 }
