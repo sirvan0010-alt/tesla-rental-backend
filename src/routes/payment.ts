@@ -10,6 +10,7 @@ import {
 import {
   createReservation,
   getReservation,
+  getReservationPublic,
   markPendingPayment,
   findReservationByTransId,
   isFullyPaid,
@@ -47,7 +48,7 @@ router.post("/reservations", async (req, res) => {
 
 router.get("/reservations/:id", async (req, res) => {
   try {
-    res.json(await getReservation(req.params.id));
+    res.json(await getReservationPublic(req.params.id));
   } catch (err) {
     res.status(404).json({ error: "Rezervace nenalezena" });
   }
@@ -139,7 +140,7 @@ router.post("/kauce", async (req, res) => {
   }
 });
 
-router.post("/kauce/:transId/release", async (req, res) => {
+router.post("/kauce/:transId/release", requireAdminKey, async (req, res) => {
   try {
     await releaseDepositHold(req.params.transId);
     res.json({ ok: true });
@@ -149,7 +150,7 @@ router.post("/kauce/:transId/release", async (req, res) => {
   }
 });
 
-router.post("/kauce/:transId/capture", async (req, res) => {
+router.post("/kauce/:transId/capture", requireAdminKey, async (req, res) => {
   const { amountCzk } = req.body;
   try {
     await captureDepositHold({
