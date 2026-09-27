@@ -1,53 +1,51 @@
-# AGENTS.md — kontext pro AI / vývojáře
+# AGENTS.md — context for AI / developers
 
 Repo: `sirvan0010-alt/tesla-rental-backend`  
-Účel: bezkontaktní pronájem Tesla Model Y Performance (Prostějov).
+Purpose: contactless rental of **Tesla Model Y Performance** (Prostějov, CZ).
 
-## Kdo na tom pracuje
+**Read next:** `docs/MULTI_AI_COLLABORATION.md` (why/how multi-AI) and `docs/PANEL-REVIEW.md` (role-based review status).
 
-- **Grok** — má GitHub write přístup, pushuje na `main`, integrace, security patche, CI
-- **Claude** — review, návrhy, lokální testy (často bez write přístupu; ověřuje přes raw GitHub URL)
-- **Majitel** — registrace Comgate/FleetBold, produkční klíče, právní věci, auto
+## Who works here
 
-## Aktuální stav kódu (pravda = soubory, ne staré README)
+- **Grok** — often GitHub write; implements, secures, CI, docs
+- **Claude** — review, local trials, patch proposals; may lack push
+- **Owner** — Comgate/FleetBold accounts, legal, insurance, car, production secrets
+- **Other AIs** — allowed if they follow this file and do not invent “done” against PANEL-REVIEW
 
-Hotové:
+## Code status (truth = files on main)
 
-- výběr vozu + termín + dostupnost (`Vehicle`, `src/routes/vehicles.ts`, `prisma/seed.ts`)
-- doklady (multer, `documents.ts`, `admin.html`)
-- platba + kauce (Comgate + **MOCK_MODE**)
-- stavy: DRAFT → PENDING_PAYMENT → PAID → ACTIVE → RETURNED → SETTLED
-- `getReservationPublic` (bez leaku unlock URL / PII)
-- `requireAdminKey` na settle + kauce release/capture
-- timing-safe admin key + startup guard (default klíč + MOCK_MODE=false = process.exit)
-- CI (tsc, prisma validate, build), Dependabot, CodeQL, branch ruleset na `main`
+Done:
 
-Záměrně stub / čeká na majitele:
+- vehicle + date selection, availability
+- document upload + admin view
+- deposit + kauce (Comgate or **MOCK_MODE**)
+- states DRAFT → … → SETTLED
+- `getReservationPublic`, admin key guards, startup guard
+- CI, Dependabot, CodeQL, unit tests, landing stub, retention script
 
-- `vehicleAccessService.ts` — šablona FleetBold, v MOCK vrací fiktivní access
-- `notificationService.ts` — console.log, ne reálný e-mail/SMS
-- ostré Comgate / FleetBold / Railway
+Waiting on owner / external:
 
-## Pravidla pro změny
+- real FleetBold API shape (`vehicleAccessService.ts` template)
+- real email/SMS (`notificationService.ts` stub)
+- production hosting, Sentry, object storage for uploads
 
-1. **Nejdřív MOCK_MODE** — celý tok musí jít bez reálných platebních klíčů.
-2. **Citlivé endpointy** — doklady, settle, release/capture kauce = vždy `requireAdminKey`.
-3. **Veřejný GET rezervace** — jen `getReservationPublic`, nikdy plný Prisma objekt.
-4. **Unlock URL** — ne do public GET; jen `/activate` (a později e-mail/SMS).
-5. **Jeden soubor pro FleetBold** — `vehicleAccessService.ts`; zbytek appky se nemění.
-6. Po větších změnách aktualizovat `README.md` a `docs/PLAN.md` (ať Claude nečte zastaralý text).
-7. `package-lock.json` generovat lokálně (`npm install`) a commitnout; CI pak může `npm ci`.
+## Rules
 
-## Lokální ověření (majitel)
+1. Prefer **MOCK_MODE** for full flow without real payment keys.
+2. Sensitive routes → `requireAdminKey`.
+3. Public GET reservation → only `getReservationPublic`.
+4. Unlock URL → not on public GET; `/activate` (+ later email/SMS).
+5. FleetBold changes → **only** `vehicleAccessService.ts`.
+6. After big changes → update `docs/PLAN.md` + `docs/PANEL-REVIEW.md`.
+7. Never commit real secrets or customer document binaries.
+
+## Local verify
 
 ```bash
 cp .env.example .env   # MOCK_MODE=true
 docker compose up -d
-npm install
-npm run prisma:migrate
-npm run prisma:seed
-npm run dev
-# http://localhost:3000  +  /admin.html
+npm install && npm run prisma:migrate && npm run prisma:seed
+npm test && npm run dev
 ```
 
-Detail: `HOW_TO_WORK_WITH_THIS.md`, `docs/PLAN.md`.
+Details: `HOW_TO_WORK_WITH_THIS.md`, `docs/PLAN.md`.
