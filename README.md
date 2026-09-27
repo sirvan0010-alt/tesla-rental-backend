@@ -1,127 +1,122 @@
-# Tesla rental — payment backend (kostra)
+# Tesla rental — contactless backend
 
-Řeší krok "platba zálohy + kauce" z celkového plánu, s tím, že zákazník
-si sám vybere způsob platby (karta, Google Pay, konkrétní česká banka).
+Backend + minimální frontend pro bezkontaktní pronájem **Tesla Model Y Performance** (Comgate platby, rezervace, doklady, přístup k vozu, vrácení, vyrovnání kauce).
+
+## Stav projektu (aktuální)
+
+Hotové v kódu (end-to-end tok v `MOCK_MODE`):
+
+- výběr vozu + termínu + kontrola dostupnosti (`Vehicle`, `src/routes/vehicles.ts`, seed)
+- nahrání dokladů (řidičák povinně, občanka volitelně) + admin prohlížení
+- platba zálohy + pre-auth kauce (Comgate nebo mock)
+- webhook → PAID → dočasný přístup k vozu (FleetBold šablona / mock)
+- odemčení (ACTIVE) → vrácení s fotkami (RETURNED) → settle kauce (SETTLED)
+- security: `getReservationPublic` (bez leaku unlock URL / PII), `requireAdminKey` na settle/kauce, timing-safe compare, startup guard proti výchozímu `ADMIN_API_KEY`
+
+Ještě není ostré (čeká na vás):
+
+- registrace Comgate + FleetBold + veřejná HTTPS (Railway)
+- reálné e-mail/SMS (SendGrid/Twilio — zatím `console.log`)
 
 ## Proč Comgate
 
-Z porovnání platebních bran (Comgate/GoPay/ThePay/Stripe) vyšel Comgate
-jako jediný, který v jedné integraci pokrývá vše potřebné:
-
-- karty, Google Pay i Apple Pay
-- "bankovní tlačítka" pro většinu českých bank (přímé přihlášení do
-  internetového bankovnictví - ČSOB, KB, Fio, Raiffeisenbank, Moneta,
-  Air Bank...) - přes 50 metod celkem
-- endpoint `methods`, který vrátí AKTUÁLNÍ seznam dostupných metod/bank
-  - takže frontend nemá natvrdo zadrátovaný seznam bank, jen ho vykreslí
-    podle odpovědi API
-- podporu pre-authorization (blokace kauce bez strhnutí) přes
-  `capturePreauth` / `cancelPreauth`
-
-V PHP světě existuje i hotový balíček `ages/payment-gateway`, který
-sjednocuje Comgate a GoPay pod jedno rozhraní - pro Node/TS jsme
-vycházeli z `comgate-node` (viz package.json).
-
-**Poznámka k pre-auth a bankovním tlačítkům:** bankovní převody
-(bankovní tlačítka) fungují jen jako běžná platba, ne jako blokace.
-Pre-auth (skutečná "kauce, co se jen zablokuje") funguje pouze u karet
-a walletů (Google Pay/Apple Pay běží nad kartou). Proto je v kódu záloha
-(`createDepositPayment`) otevřená všem metodám (`method: "ALL"`), ale
-kauce (`createDepositHold`) omezená na `CARD_ALL`. Zákazníkovi je potřeba
-v UI vysvětlit, že kauci lze složit jen kartou/walletem - běžná praxe
-u půjčoven.
+- karty, Google Pay, Apple Pay
+- bankovní tlačítka (ČSOB, KB, Fio, …)
+- endpoint `methods` — frontend si natahá aktuální seznam
+- pre-auth kauce (`capturePreauth` / `cancelPreauth`) — jen karty/wallety, ne bankovní tlačítka
 
 ## Struktura
 
 ```
-prisma/schema.prisma          - model Reservation + stavový enum
-public/index.html              - minimální frontend pro zákazníka (viz níže)
-public/admin.html              - admin prohlížení dokladů
+prisma/
+  schema.prisma          Reservation + Vehicle + stavy
+  seed.ts                Tesla Y Performance (Prostějov)
+public/
+  index.html             zákaznický tok (4 kroky)
+  admin.html             doklady + settle kauce
 src/
-  db.ts                       - Prisma client
-  paymentService.ts           - veškerá komunikace s Comgate (metody, záloha, kauce)
-  services/reservationService.ts   - přechody stavů rezervace
-  services/vehicleAccessService.ts - vytvoření/zrušení dočasného přístupu k vozu (FleetBold apod.)
-  services/notificationService.ts  - odeslání instrukcí zákazníkovi (e-mail/SMS - zatím stub)
-  routes/payment.ts           - REST endpointy pro frontend appku
-  server.ts                   - Express server (servíruje i public/)
+  db.ts
+  paymentService.ts      Comgate + MOCK_MODE
+  middleware/adminAuth.ts
+  routes/
+    payment.ts
+    documents.ts
+    vehicles.ts
+  services/
+    reservationService.ts   stavy + getReservationPublic
+    vehicleAccessService.ts FleetBold šablona + MOCK
+    notificationService.ts  stub e-mail/SMS
+  server.ts              Express + startup guard ADMIN_API_KEY
+docker-compose.yml       Postgres
+.env.example             MOCK_MODE=true výchozí
 ```
 
-## Frontend pro zákazníka (`public/index.html`)
+## Stavy rezervace
 
-Jedna statická stránka bez frameworku (čistý HTML/JS), servírovaná
-přímo Express serverem na `http://localhost:3000/`. Tři kroky:
+```
+DRAFT → PENDING_PAYMENT → PAID → ACTIVE → RETURNED → SETTLED
+                 ↘ FAILED / CANCELLED
+```
 
-1. **Údaje** - jméno, e-mail, telefon + povinná fotka řidičáku (občanka volitelně)
-   → založí rezervaci a nahraje doklady
-2. **Platba** - tlačítka se seznamem metod natažená live z `/api/payment/methods`
-3. **Čekání → Odemknout** - polling na `PAID`, pak tlačítko "Odemknout vůz"
+## Endpointy
 
-## Doklady zákazníka (řidičák/občanka)
-
-Ukládají se jako **běžné soubory, bez šifrování** - záměrně, na výslovné
-přání, aby k nim majitel měl přímý přístup bez správy šifrovacích klíčů.
-
-- Soubory leží na disku ve `uploads/documents/` (v `.gitignore`, není veřejný static)
-- Přístup jen přes admin middleware (`ADMIN_API_KEY`)
-- Na produkci doporučen šifrovaný disk (LUKS/BitLocker/cloud disk encryption)
-
-**Endpointy (vyžadují backend implementaci – viz poznámka níže):**
+### Zákazník
 
 | Metoda | Cesta | Účel |
-|---|---|---|
-| POST | /api/documents/:id/upload | zákazník nahraje foto ŘP (povinné) + OP (volitelné) |
-| GET | /api/documents/:id/view | admin JSON s odkazy na doklady (x-admin-key) |
-| GET | /uploads/documents/... | soubory fotek (chráněno admin klíčem) |
-
-**`public/admin.html`** – ID rezervace + admin klíč → jméno, kontakt, fotky.
-
-## Model rezervace a stavy
-
-```
-DRAFT -> PENDING_PAYMENT -> PAID -> ACTIVE -> RETURNED -> SETTLED
-                 \-> FAILED          (nebo CANCELLED z DRAFT)
-```
-
-## Endpointy (platby)
-
-| Metoda | Cesta | Účel |
-|---|---|---|
-| POST | /api/payment/reservations | založení rezervace (DRAFT) |
-| GET | /api/payment/reservations/:id | stav rezervace |
-| POST | /api/payment/reservations/:id/activate | PAID → ACTIVE |
-| POST | /api/payment/reservations/:id/retry-access | retry přístupu k vozu |
+|--------|--------|------|
+| GET | /api/vehicles | seznam aktivních vozů |
+| GET | /api/vehicles/:id/availability | dostupnost termínu |
+| POST | /api/payment/reservations | založení rezervace |
+| GET | /api/payment/reservations/:id | veřejný stav (`getReservationPublic`) |
+| POST | /api/documents/:id/upload | nahrání ŘP (+ OP) |
+| POST | /api/documents/:id/return-photos | fotky při vrácení |
 | GET | /api/payment/methods | platební metody |
 | POST | /api/payment/deposit | záloha |
 | POST | /api/payment/kauce | pre-auth kauce |
+| POST | /api/payment/webhook | Comgate notifikace |
+| POST | /api/payment/reservations/:id/activate | PAID → ACTIVE |
+
+### Admin (`x-admin-key`)
+
+| Metoda | Cesta | Účel |
+|--------|--------|------|
+| GET | /api/documents/:id/view | JSON + odkazy na doklady |
+| GET | /uploads/documents/… | soubory dokladů |
+| GET | /uploads/returns/… | fotky vrácení |
+| POST | /api/payment/reservations/:id/settle | uvolnit / strhnout kauci |
 | POST | /api/payment/kauce/:transId/release | uvolnění kauce |
 | POST | /api/payment/kauce/:transId/capture | strhnutí kauce |
-| POST | /api/payment/webhook | Comgate notifikace |
-| GET | /api/payment/:transId/status | stav platby |
 
-## Nastavení
+## Lokální spuštění (MOCK, bez registrací)
 
-1. `cp .env.example .env` – doplnit Comgate, DATABASE_URL, VEHICLE_ACCESS_*, **ADMIN_API_KEY**
-2. `npm install`
-3. `npm run prisma:migrate`
-4. Comgate notifikační URL → `/api/payment/webhook`
-5. `npm run dev`
+```bash
+git clone https://github.com/sirvan0010-alt/tesla-rental-backend.git
+cd tesla-rental-backend
+cp .env.example .env          # MOCK_MODE=true
+docker compose up -d          # Postgres
+npm install
+npm run prisma:migrate
+npm run prisma:seed
+npm run dev
+# http://localhost:3000
+# http://localhost:3000/admin.html  (klíč z .env)
+```
 
-## Co doplnit dál (backend pro doklady)
+## Security (stručně)
 
-Frontend a schema už doklady očekávají. **Ještě chybí v repozitáři:**
+- `GET /reservations/:id` nevrací unlock URL, kontakty ani transId — jen `vehicleAccessReady`
+- unlock URL jde zákazníkovi přes `/activate` (a e-mail/SMS až budou zapojené)
+- admin + settle + release/capture kauce vyžadují `ADMIN_API_KEY`
+- mimo `MOCK_MODE` server s výchozím admin klíčem **nespustí**
+- porovnání klíče: `crypto.timingSafeEqual`
 
-- `src/routes/documents.ts` – upload + view endpointy
-- `src/middleware/adminAuth.ts` – kontrola `x-admin-key` / `?key=`
-- úprava `src/server.ts` – napojení routes + chráněný přístup k `/uploads`
-- `multer` (nebo ekvivalent) v `package.json` pro multipart upload
-- `ADMIN_API_KEY` v `.env.example`
+## Co dál
 
-Bez těchto souborů frontend při nahrání dokladu selže. Pošlete je, nebo je můžu doplnit.
+1. Otestovat celý tok v MOCK_MODE
+2. Comgate sandbox + `MOCK_MODE=false`
+3. FleetBold / Tesla přístup — upravit jen `vehicleAccessService.ts`
+4. Nasazení (Railway) + silný `ADMIN_API_KEY` + HTTPS webhook
+5. SendGrid / Twilio v `notificationService.ts`
 
-## Co dál (produkt)
-
-- výběr termínu/vozu
-- ACTIVE → RETURNED → SETTLED + fotky při vrácení
-- reálné notifikace (e-mail/SMS)
-- napojení Tesla/FleetBold podle partnerské dokumentace
+Detailní plán: `docs/kompletni-plan-tesla-pronajem.md`  
+Praktický návod: `HOW_TO_WORK_WITH_THIS.md`
