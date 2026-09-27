@@ -86,6 +86,7 @@
 <div class="card" id="step-vehicle">
   <h1>Rezervace vozu</h1>
   <div class="step-label">Krok 1 z 4 · Vyberte vůz a termín</div>
+  <p class="hint">Bezkontaktní vyzvednutí — auto si vyzvednete sami, bez čekání na majitele. Záloha se strhne, kauce se jen zablokuje na kartě a po vrácení se uvolní.</p>
   <label for="vehicle">Vůz</label>
   <select id="vehicle"></select>
   <label for="starts">Od</label>
@@ -110,6 +111,10 @@
   <input id="license" type="file" accept="image/*" capture="environment" />
   <label for="idcard">Fotka občanského průkazu (volitelné)</label>
   <input id="idcard" type="file" accept="image/*" capture="environment" />
+  <p class="hint" style="margin-top:12px">
+    Doklady potřebujeme k ověření totožnosti a řidičského oprávnění kvůli pojištění vozu.
+    Ukládáme je zabezpečeně, nesdílíme je třetím stranám a po uplynutí zákonné lhůty je mažeme.
+  </p>
   <div class="error" id="details-error"></div>
   <button onclick="submitDetails()">Pokračovat k platbě</button>
 </div>
@@ -125,8 +130,9 @@
 
 <div class="card" id="step-waiting" style="display:none">
   <h1>Zpracováváme platbu</h1>
-  <p>Až banka platbu potvrdí, tlačítko pro odemčení se zobrazí samo – stránku není třeba obnovovat.</p>
+  <p>Až platba projde, tlačítko pro odemčení se zobrazí samo – stránku není třeba obnovovat.</p>
   <div class="status-pill" id="status-pill">Čekání na potvrzení…</div>
+  <div class="hint" id="wait-hint" style="margin-top:12px"></div>
 </div>
 
 <div class="card" id="step-unlock" style="display:none">
@@ -222,6 +228,14 @@
 
     if (!name || !email || !phone) {
       errBox.textContent = "Vyplňte prosím všechna pole.";
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      errBox.textContent = "Zadejte platný e-mail.";
+      return;
+    }
+    if (!/^[+0-9\s-]{9,}$/.test(phone)) {
+      errBox.textContent = "Zadejte platný telefon (alespoň 9 číslic).";
       return;
     }
     const licenseFile = document.getElementById("license").files[0];
@@ -334,22 +348,52 @@
 
   async function pollStatus() {
     const pill = document.getElementById("status-pill");
+    const waitHint = document.getElementById("wait-hint");
+    const started = Date.now();
+    const PAYMENT_TIMEOUT_MS = 5 * 60 * 1000;
+    const ACCESS_TIMEOUT_MS = 5 * 60 * 1000;
+    let accessWaitStarted = null;
+
     const check = async () => {
-      const r = await fetch(`${API}/reservations/${reservationId}`);
-      const reservation = await r.json();
-      if (reservation.status === "PAID") {
-        document.getElementById("unlock-hint").textContent = reservation.vehicleAccessReady
-          ? ""
-          : "Přístup k vozu se ještě dokončuje, zkuste tlačítko za pár minut.";
-        show("step-unlock");
-        return;
+      try {
+        const r = await fetch(`${API}/reservations/${reservationId}`);
+        const reservation = await r.json();
+        if (reservation.status === "PAID") {
+          if (!accessWaitStarted) accessWaitStarted = Date.now();
+          if (reservation.vehicleAccessReady) {
+            document.getElementById("unlock-hint").textContent = "";
+            show("step-unlock");
+            return;
+          }
+          await fetch(`${API}/reservations/${reservationId}/retry-access`, { method: "POST" }).catch(() => {});
+          document.getElementById("unlock-hint").textContent =
+            "Přístup k vozu se ještě dokončuje, zkuste tlačítko za chvíli.";
+          if (Date.now() - accessWaitStarted > ACCESS_TIMEOUT_MS) {
+            waitHint.textContent =
+              "Přístup se připravuje déle než obvykle. Ozveme se vám SMS/e-mailem, nebo volejte majitele.";
+            show("step-unlock");
+            return;
+          }
+          show("step-unlock");
+          return;
+        }
+        if (reservation.status === "FAILED") {
+          pill.textContent = "Platba se nezdařila";
+          waitHint.textContent = "Zkuste vytvořit novou rezervaci nebo jinou platební metodu.";
+          return;
+        }
+        if (Date.now() - started > PAYMENT_TIMEOUT_MS) {
+          pill.textContent = "Platba se nepotvrdila včas";
+          waitHint.textContent =
+            "Pokud jste platbu dokončili, obnovte stránku za chvíli. Jinak začněte rezervaci znovu.";
+          return;
+        }
+        pill.textContent = `Stav: ${reservation.status}`;
+        setTimeout(check, 3000);
+      } catch (e) {
+        pill.textContent = "Dočasný výpadek spojení…";
+        setTimeout(check, 5000);
       }
-      if (reservation.status === "FAILED") {
-        pill.textContent = "Platba se nezdařila";
-        return;
-      }
-      pill.textContent = `Stav: ${reservation.status}`;
-      setTimeout(check, 3000);
     };
     check();
   }
