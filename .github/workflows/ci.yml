@@ -20,9 +20,8 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      # package-lock.json zatím není v repu → npm install (po vygenerování locku můžete přepnout na npm ci)
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Generate Prisma client
         run: npx prisma generate
