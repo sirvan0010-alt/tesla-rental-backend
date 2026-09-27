@@ -338,7 +338,7 @@
       const r = await fetch(`${API}/reservations/${reservationId}`);
       const reservation = await r.json();
       if (reservation.status === "PAID") {
-        document.getElementById("unlock-hint").textContent = reservation.vehicleUnlockUrl
+        document.getElementById("unlock-hint").textContent = reservation.vehicleAccessReady
           ? ""
           : "Přístup k vozu se ještě dokončuje, zkuste tlačítko za pár minut.";
         show("step-unlock");
