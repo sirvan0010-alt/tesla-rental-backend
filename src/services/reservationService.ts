@@ -49,6 +49,46 @@ export async function getReservation(id: string) {
   return prisma.reservation.findUniqueOrThrow({ where: { id } });
 }
 
+/**
+ * Bezpečná verze pro veřejný GET endpoint (bez přihlášení, jen podle ID
+ * rezervace v URL). Nesmí vracet: vehicleUnlockUrl/vehicleAccessId (bearer
+ * odkaz pro odemčení vozu), jméno/e-mail/telefon zákazníka, transId platby
+ * ani odkazy na doklady - to všechno jde jen přes chráněné admin/interní
+ * cesty. Frontend potřebuje pouze vědět, jestli je přístup k vozu už
+ * připravený - k tomu slouží boolean vehicleAccessReady.
+ */
+export async function getReservationPublic(id: string) {
+  const r = await prisma.reservation.findUniqueOrThrow({
+    where: { id },
+    select: {
+      id: true,
+      status: true,
+      startsAt: true,
+      endsAt: true,
+      depositAmountCzk: true,
+      kauceAmountCzk: true,
+      vehicleId: true,
+      vehicleVin: true,
+      createdAt: true,
+      vehicleAccessId: true,
+      vehicleAccessError: true,
+    },
+  });
+  return {
+    id: r.id,
+    status: r.status,
+    startsAt: r.startsAt,
+    endsAt: r.endsAt,
+    depositAmountCzk: r.depositAmountCzk,
+    kauceAmountCzk: r.kauceAmountCzk,
+    vehicleId: r.vehicleId,
+    vehicleVin: r.vehicleVin,
+    createdAt: r.createdAt,
+    vehicleAccessReady: Boolean(r.vehicleAccessId),
+    vehicleAccessError: r.vehicleAccessError ?? undefined,
+  };
+}
+
 export async function markPendingPayment(params: {
   reservationId: string;
   depositTransId?: string;
