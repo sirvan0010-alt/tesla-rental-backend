@@ -31,6 +31,7 @@ describe("platba -> webhook -> PAID -> přístup k vozu", () => {
       customerEmail: "test@example.com",
     });
     expect(depositRes.status).toBe(200);
+    expect(depositRes.body.transId).toBeDefined();
 
     const kauceRes = await request(app).post("/api/payment/kauce").send({
       reservationId,
@@ -38,11 +39,20 @@ describe("platba -> webhook -> PAID -> přístup k vozu", () => {
       customerEmail: "test@example.com",
     });
     expect(kauceRes.status).toBe(200);
+    expect(kauceRes.body.transId).toBeDefined();
 
     const beforeWebhook = await request(app).get(`/api/payment/reservations/${reservationId}`);
     expect(beforeWebhook.body.status).toBe("PENDING_PAYMENT");
 
-    await new Promise((resolve) => setTimeout(resolve, 3500));
+    // Explicitní webhook (nespoléháme na MOCK setTimeout → localhost)
+    await request(app)
+      .post("/api/payment/webhook")
+      .send({ transId: depositRes.body.transId, refId: reservationId })
+      .expect(200);
+    await request(app)
+      .post("/api/payment/webhook")
+      .send({ transId: kauceRes.body.transId, refId: reservationId })
+      .expect(200);
 
     const afterWebhook = await request(app).get(`/api/payment/reservations/${reservationId}`);
     expect(afterWebhook.status).toBe(200);

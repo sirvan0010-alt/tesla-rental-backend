@@ -22,18 +22,23 @@ describe("settle - vyrovnání kauce po vrácení vozu", () => {
     });
     reservationId = createRes.body.id;
 
-    await request(app).post("/api/payment/deposit").send({
+    const depositRes = await request(app).post("/api/payment/deposit").send({
       reservationId,
       amountCzk: createRes.body.depositAmountCzk,
       customerEmail: "settle-test@example.com",
     });
-    await request(app).post("/api/payment/kauce").send({
+    const kauceRes = await request(app).post("/api/payment/kauce").send({
       reservationId,
       depositCzk: createRes.body.kauceAmountCzk,
       customerEmail: "settle-test@example.com",
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 3500));
+    await request(app)
+      .post("/api/payment/webhook")
+      .send({ transId: depositRes.body.transId, refId: reservationId });
+    await request(app)
+      .post("/api/payment/webhook")
+      .send({ transId: kauceRes.body.transId, refId: reservationId });
 
     await markReturned({ reservationId, photoUrls: ["/uploads/returns/test.jpg"] });
   });
