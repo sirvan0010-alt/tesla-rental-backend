@@ -1,5 +1,5 @@
 import { prisma } from "../db";
-import { ReservationStatus } from "@prisma/client";
+import { ReservationStatus, Prisma } from "@prisma/client";
 
 export async function createReservation(params: {
   customerName: string;
@@ -9,43 +9,53 @@ export async function createReservation(params: {
   startsAt: Date;
   endsAt: Date;
 }) {
-  const vehicle = await prisma.vehicle.findFirst({
-    where: { id: params.vehicleId, active: true },
-  });
-  if (!vehicle) throw new Error("Vůz nenalezen nebo není aktivní");
-
   if (params.endsAt <= params.startsAt) {
     throw new Error("Datum konce musí být po datu začátku");
   }
 
-  const conflict = await prisma.reservation.findFirst({
-    where: {
-      vehicleId: params.vehicleId,
-      status: { notIn: [ReservationStatus.CANCELLED, ReservationStatus.FAILED] },
-      startsAt: { lt: params.endsAt },
-      endsAt: { gt: params.startsAt },
-    },
-  });
-  if (conflict) throw new Error("Vůz je v tomto termínu obsazený");
+  // Serializable snižuje šanci double-bookingu (find + create v jedné transakci).
+  // Plný exclusion constraint v DB je další krok při stabilizaci schématu.
+  return prisma.$transaction(
+    async (tx) => {
+      const vehicle = await tx.vehicle.findFirst({
+        where: { id: params.vehicleId, active: true },
+      });
+      if (!vehicle) throw new Error("Vůz nenalezen nebo není aktivní");
 
-  const msPerDay = 24 * 60 * 60 * 1000;
-  const days = Math.max(1, Math.ceil((params.endsAt.getTime() - params.startsAt.getTime()) / msPerDay));
-  const depositAmountCzk = days * vehicle.dailyPriceCzk;
+      const conflict = await tx.reservation.findFirst({
+        where: {
+          vehicleId: params.vehicleId,
+          status: { notIn: [ReservationStatus.CANCELLED, ReservationStatus.FAILED] },
+          startsAt: { lt: params.endsAt },
+          endsAt: { gt: params.startsAt },
+        },
+      });
+      if (conflict) throw new Error("Vůz je v tomto termínu obsazený");
 
-  return prisma.reservation.create({
-    data: {
-      customerName: params.customerName,
-      customerEmail: params.customerEmail,
-      customerPhone: params.customerPhone,
-      vehicleId: vehicle.id,
-      vehicleVin: vehicle.vin,
-      startsAt: params.startsAt,
-      endsAt: params.endsAt,
-      depositAmountCzk,
-      kauceAmountCzk: vehicle.kauceAmountCzk,
-      status: ReservationStatus.DRAFT,
+      const msPerDay = 24 * 60 * 60 * 1000;
+      const days = Math.max(
+        1,
+        Math.ceil((params.endsAt.getTime() - params.startsAt.getTime()) / msPerDay)
+      );
+      const depositAmountCzk = days * vehicle.dailyPriceCzk;
+
+      return tx.reservation.create({
+        data: {
+          customerName: params.customerName,
+          customerEmail: params.customerEmail,
+          customerPhone: params.customerPhone,
+          vehicleId: vehicle.id,
+          vehicleVin: vehicle.vin,
+          startsAt: params.startsAt,
+          endsAt: params.endsAt,
+          depositAmountCzk,
+          kauceAmountCzk: vehicle.kauceAmountCzk,
+          status: ReservationStatus.DRAFT,
+        },
+      });
     },
-  });
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+  );
 }
 
 export async function getReservation(id: string) {
@@ -163,6 +173,35 @@ export async function markReturned(params: { reservationId: string; photoUrls: s
   return prisma.reservation.update({
     where: { id: params.reservationId },
     data: { status: ReservationStatus.RETURNED, returnPhotosUrls: params.photoUrls },
+  });
+}
+
+/**
+ * Atomicky „zabere“ RETURNED → SETTLED (count 0 = už vyrovnáno / race).
+ * Peněžní operace volajícího musí proběhnout až po úspěšném claimu;
+ * při selhání Comgate volej releaseSettlementClaim.
+ */
+export async function claimSettlement(params: {
+  reservationId: string;
+  damageNoteText?: string;
+}) {
+  const result = await prisma.reservation.updateMany({
+    where: {
+      id: params.reservationId,
+      status: ReservationStatus.RETURNED,
+    },
+    data: {
+      status: ReservationStatus.SETTLED,
+      ...(params.damageNoteText ? { damageNoteText: params.damageNoteText } : {}),
+    },
+  });
+  return result.count === 1;
+}
+
+export async function releaseSettlementClaim(reservationId: string) {
+  return prisma.reservation.updateMany({
+    where: { id: reservationId, status: ReservationStatus.SETTLED },
+    data: { status: ReservationStatus.RETURNED, damageNoteText: null },
   });
 }
 

@@ -5,10 +5,36 @@ import paymentRouter from "./routes/payment";
 import documentsRouter from "./routes/documents";
 import vehiclesRouter from "./routes/vehicles";
 import { requireAdminKey } from "./middleware/adminAuth";
+import { rateLimit } from "./middleware/rateLimit";
 
 export const app = express();
-app.use(cors());
-app.use(express.json());
+
+const allowed = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+if (allowed.length === 0 || process.env.MOCK_MODE === "true") {
+  app.use(cors());
+} else {
+  app.use(
+    cors({
+      origin: (origin, cb) => {
+        if (!origin || allowed.includes(origin)) return cb(null, true);
+        return cb(new Error("CORS not allowed"));
+      },
+    })
+  );
+}
+
+app.use(express.json({ limit: "1mb" }));
+
+const publicWriteLimit = rateLimit({ windowMs: 60_000, max: 30, keyPrefix: "write" });
+
+app.use("/api/payment/reservations", publicWriteLimit);
+app.use("/api/payment/deposit", publicWriteLimit);
+app.use("/api/payment/kauce", publicWriteLimit);
+app.use("/api/documents", publicWriteLimit);
 
 app.use("/api/payment", paymentRouter);
 app.use("/api/documents", documentsRouter);
