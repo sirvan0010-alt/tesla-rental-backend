@@ -1,37 +1,34 @@
-# PLAN.md — aktuální stav (zdroj pravdy + git log)
+# PLAN.md — zdroj pravdy
 
-## Miniplán Grok (2026-09-28) — stav
+## Miniplán / P1 (2026-09-28)
 
-| Krok | Stav | Commit (přibližně) |
-|------|------|--------------------|
-| 1 Frontend pay() bez klientských částek + negativní testy | ✅ | `c8e10f0` |
-| 2 Settle idempotence (claim RETURNED→SETTLED) + return/activate guards | ✅ | `fa49cf4` / `5c1c5f8` |
-| 3 Anti double-book (Serializable tx) + rate limit + CORS env | ✅ | `5c1c5f8` |
-| 4 Sync PLAN | ✅ | tento commit |
+| Krok | Stav |
+|------|------|
+| Frontend pay bez klientských částek + moneySecurity testy | ✅ |
+| Settle claimSettlement | ✅ |
+| Serializable booking + rate limit + CORS | ✅ |
+| **Customer access token** (`/customer-session` + `/activate`) | ✅ kód `4fbe7b7` + service |
+| Frontend accessToken flow | ⏳ push index (session v unlock) — ověřit v main |
+| CI / npm test ověřeno zeleně | ⏳ owner / Actions |
+| Settlement reconciliation job | ⏳ další |
 
-## Hotovo v kódu
+## Customer access (jak to funguje)
 
-- Server-authoritative deposit/kauce; damage ≤ kauce
-- RETURNED jen ACTIVE; doklady jen DRAFT/PENDING_PAYMENT
-- Public DTO bez VIN/PII; claimSettlement
-- createReservation v Serializable transakci
-- rateLimit 30/min na write endpointy; CORS_ORIGINS
-- Testy: webhook, settle, moneySecurity
+1. Po PAID webhook vystaví token (nebo při `/customer-session`).
+2. `POST /reservations/:id/customer-session` + `{ customerEmail }` → `{ accessToken, expiresAt }`.
+3. `POST /reservations/:id/activate` + `{ accessToken, customerEmail? }` → ACTIVE + unlock URL.
+4. Token TTL 48 h, po aktivaci `usedAt` — druhý activate → 401.
+5. Veřejný GET **nevrací** token.
 
-## Zbývá (tech)
+## Schema
 
-- [ ] Ověřit zelené CI / `npm test` lokálně
-- [ ] package-lock + npm ci
-- [ ] Customer access token (ne jen reservation id) — P1
-- [ ] DB exclusion constraint (silnější než Serializable)
-- [ ] Webhook reconciliation job
-- [ ] Comgate / FleetBold / hosting (owner)
+Po pull: `npx prisma db push` (nová pole customerAccessToken*).
 
 ## Business
 
-- BUSINESS.md / ECONOMICS zatím **nevytvářet** — čeká samostatná analýza (max 3 dny, 1–2 vs 1–3)
-- Demand engine = větší riziko než backend
+ECONOMICS/DEMAND zatím **nezapisovat** — čeká samostatná analýza (max 3 dny).
 
-## AGENTS — neměnit bez majitele
+## Owner
 
-Comgate, app unlock, názvy stavů, nešifrované doklady (vědomě), kauce pre-auth.
+- `npm test` / Actions log
+- Comgate, pojištění, FALLBACK telefon
