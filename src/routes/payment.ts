@@ -19,7 +19,8 @@ import {
   saveVehicleAccess,
   saveVehicleAccessError,
   markActive,
-  markSettled,
+  claimSettlement,
+  releaseSettlementClaim,
 } from "../services/reservationService";
 import { createVehicleAccess, revokeVehicleAccess } from "../services/vehicleAccessService";
 import { sendAccessInstructions } from "../services/notificationService";
@@ -249,8 +250,9 @@ router.post("/reservations/:id/settle", requireAdminKey, async (req, res) => {
       return res.status(409).json({ error: "K rezervaci chybí kauceTransId, nelze vyrovnat" });
     }
 
+    let amount = 0;
     if (damaged) {
-      const amount = Number(damageAmountCzk);
+      amount = Number(damageAmountCzk);
       if (!amount || amount <= 0) {
         return res.status(400).json({ error: "U škody je nutné zadat damageAmountCzk > 0" });
       }
@@ -259,9 +261,26 @@ router.post("/reservations/:id/settle", requireAdminKey, async (req, res) => {
           error: `damageAmountCzk nesmí překročit kauci (${reservation.kauceAmountCzk} Kč)`,
         });
       }
-      await captureDepositHold({ comgateTransId: reservation.kauceTransId, amountCzk: amount });
-    } else {
-      await releaseDepositHold(reservation.kauceTransId);
+    }
+
+    const noteText = damaged ? note ?? `Strženo ${amount} Kč z kauce` : undefined;
+    const claimed = await claimSettlement({
+      reservationId: reservation.id,
+      damageNoteText: noteText,
+    });
+    if (!claimed) {
+      return res.status(409).json({ error: "Rezervace už byla vyrovnána nebo není ve stavu RETURNED" });
+    }
+
+    try {
+      if (damaged) {
+        await captureDepositHold({ comgateTransId: reservation.kauceTransId, amountCzk: amount });
+      } else {
+        await releaseDepositHold(reservation.kauceTransId);
+      }
+    } catch (payErr) {
+      await releaseSettlementClaim(reservation.id);
+      throw payErr;
     }
 
     if (reservation.vehicleAccessId) {
@@ -272,10 +291,7 @@ router.post("/reservations/:id/settle", requireAdminKey, async (req, res) => {
       }
     }
 
-    const settled = await markSettled({
-      reservationId: reservation.id,
-      damageNoteText: damaged ? note ?? `Strženo ${damageAmountCzk} Kč z kauce` : undefined,
-    });
+    const settled = await getReservation(reservation.id);
     res.json(settled);
   } catch (err) {
     console.error("settle error", err);
