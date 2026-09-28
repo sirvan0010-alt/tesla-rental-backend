@@ -20,23 +20,13 @@ const storage = multer.diskStorage({
 });
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB na fotku
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (!file.mimetype.startsWith("image/")) return cb(new Error("Pouze obrázky"));
     cb(null, true);
   },
 });
 
-/**
- * POST /api/documents/:id/upload
- * Zákazník sem nahraje foto dokladů v kroku "Údaje" - PŘED platbou.
- * Pole formuláře: driverLicense, idCard (idCard je volitelné).
- *
- * Soubory se ukládají jako BĚŽNÉ soubory na disk (bez šifrování) -
- * záměrně, aby k nim měl majitel přímý přístup přes admin endpoint níže.
- * Složka `uploads/` MUSÍ zůstat mimo veřejný `public/` adresář a mimo Git
- * (viz .gitignore) - přístup k obsahu jde jen přes chráněnou route.
- */
 router.post(
   "/:id/upload",
   upload.fields([
@@ -45,7 +35,10 @@ router.post(
   ]),
   async (req, res) => {
     try {
-      await getReservation(req.params.id); // ověří, že rezervace existuje
+      const reservation = await getReservation(req.params.id);
+      if (reservation.status !== "DRAFT" && reservation.status !== "PENDING_PAYMENT") {
+        return res.status(409).json({ error: "Doklady lze nahrát jen před dokončením platby" });
+      }
       const files = req.files as Record<string, Express.Multer.File[]>;
       const data: Record<string, string> = {};
       if (files?.driverLicense?.[0]) {
@@ -61,7 +54,10 @@ router.post(
         where: { id: req.params.id },
         data,
       });
-      res.json({ driverLicensePhotoUrl: updated.driverLicensePhotoUrl, idCardPhotoUrl: updated.idCardPhotoUrl });
+      res.json({
+        driverLicensePhotoUrl: updated.driverLicensePhotoUrl,
+        idCardPhotoUrl: updated.idCardPhotoUrl,
+      });
     } catch (err) {
       console.error("document upload error", err);
       res.status(400).json({ error: "Nahrání dokladů selhalo" });
@@ -88,16 +84,8 @@ const uploadReturnPhotos = multer({
   },
 });
 
-/**
- * POST /api/documents/:id/return-photos
- * Zákazník sem při vrácení vozu nahraje 4-8 fotek (pole "photos").
- * Endpoint jen ULOŽÍ fotky a přepne rezervaci na RETURNED - o strhnutí
- * nebo uvolnění kauce rozhoduje až majitel přes admin endpoint
- * /api/payment/reservations/:id/settle (viz routes/payment.ts).
- */
 router.post("/:id/return-photos", uploadReturnPhotos.array("photos", 8), async (req, res) => {
   try {
-    await getReservation(req.params.id);
     const files = (req.files as Express.Multer.File[]) ?? [];
     if (files.length === 0) {
       return res.status(400).json({ error: "Nahrajte prosím alespoň jednu fotku" });
@@ -105,17 +93,13 @@ router.post("/:id/return-photos", uploadReturnPhotos.array("photos", 8), async (
     const urls = files.map((f) => `/uploads/returns/${f.filename}`);
     const updated = await markReturned({ reservationId: req.params.id, photoUrls: urls });
     res.json({ status: updated.status, returnPhotosUrls: updated.returnPhotosUrls });
-  } catch (err) {
+  } catch (err: any) {
     console.error("return photo upload error", err);
-    res.status(400).json({ error: "Nahrání fotek při vrácení selhalo" });
+    const code = err?.statusCode === 409 ? 409 : 400;
+    res.status(code).json({ error: err?.message || "Nahrání fotek při vrácení selhalo" });
   }
 });
 
-/**
- * GET /api/documents/:id/view
- * Admin náhled - vrátí odkazy na doklady dané rezervace i základní údaje
- * zákazníka pohromadě, pro řešení škody/sporu. Chráněno x-admin-key.
- */
 router.get("/:id/view", requireAdminKey, async (req, res) => {
   try {
     const r = await getReservation(req.params.id);

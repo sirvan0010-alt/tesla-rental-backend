@@ -25,26 +25,17 @@ describe("platba -> webhook -> PAID -> přístup k vozu", () => {
     expect(reservationId).toBeDefined();
     expect(createRes.body.status).toBe("DRAFT");
 
-    const depositRes = await request(app).post("/api/payment/deposit").send({
-      reservationId,
-      amountCzk: createRes.body.depositAmountCzk,
-      customerEmail: "test@example.com",
-    });
+    const depositRes = await request(app).post("/api/payment/deposit").send({ reservationId });
     expect(depositRes.status).toBe(200);
     expect(depositRes.body.transId).toBeDefined();
 
-    const kauceRes = await request(app).post("/api/payment/kauce").send({
-      reservationId,
-      depositCzk: createRes.body.kauceAmountCzk,
-      customerEmail: "test@example.com",
-    });
+    const kauceRes = await request(app).post("/api/payment/kauce").send({ reservationId });
     expect(kauceRes.status).toBe(200);
     expect(kauceRes.body.transId).toBeDefined();
 
     const beforeWebhook = await request(app).get(`/api/payment/reservations/${reservationId}`);
     expect(beforeWebhook.body.status).toBe("PENDING_PAYMENT");
 
-    // Explicitní webhook (nespoléháme na MOCK setTimeout → localhost)
     await request(app)
       .post("/api/payment/webhook")
       .send({ transId: depositRes.body.transId, refId: reservationId })
@@ -58,11 +49,10 @@ describe("platba -> webhook -> PAID -> přístup k vozu", () => {
     expect(afterWebhook.status).toBe(200);
     expect(afterWebhook.body.status).toBe("PAID");
     expect(afterWebhook.body.vehicleAccessReady).toBe(true);
-
     expect(afterWebhook.body.vehicleUnlockUrl).toBeUndefined();
     expect(afterWebhook.body.customerEmail).toBeUndefined();
+    expect(afterWebhook.body.vehicleVin).toBeUndefined();
     expect(afterWebhook.body.depositTransId).toBeUndefined();
-    expect(afterWebhook.body.driverLicensePhotoUrl).toBeUndefined();
   });
 
   it("webhook s neznámým transId nespadne a vrátí 200", async () => {

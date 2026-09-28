@@ -3,7 +3,7 @@ import request from "supertest";
 import { app } from "../src/app";
 import "./setup";
 import { testVehicleId } from "./setup";
-import { markReturned } from "../src/services/reservationService";
+import { markActive, markReturned } from "../src/services/reservationService";
 
 describe("settle - vyrovnání kauce po vrácení vozu", () => {
   let reservationId: string;
@@ -22,16 +22,8 @@ describe("settle - vyrovnání kauce po vrácení vozu", () => {
     });
     reservationId = createRes.body.id;
 
-    const depositRes = await request(app).post("/api/payment/deposit").send({
-      reservationId,
-      amountCzk: createRes.body.depositAmountCzk,
-      customerEmail: "settle-test@example.com",
-    });
-    const kauceRes = await request(app).post("/api/payment/kauce").send({
-      reservationId,
-      depositCzk: createRes.body.kauceAmountCzk,
-      customerEmail: "settle-test@example.com",
-    });
+    const depositRes = await request(app).post("/api/payment/deposit").send({ reservationId });
+    const kauceRes = await request(app).post("/api/payment/kauce").send({ reservationId });
 
     await request(app)
       .post("/api/payment/webhook")
@@ -40,6 +32,7 @@ describe("settle - vyrovnání kauce po vrácení vozu", () => {
       .post("/api/payment/webhook")
       .send({ transId: kauceRes.body.transId, refId: reservationId });
 
+    await markActive(reservationId);
     await markReturned({ reservationId, photoUrls: ["/uploads/returns/test.jpg"] });
   });
 
