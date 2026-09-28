@@ -2,11 +2,10 @@ import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { app } from "../src/app";
 import "./setup";
-import { testVehicleId } from "./setup";
+import { testVehicleId, testWindow } from "./setup";
 
 async function paidReservation() {
-  const startsAt = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
-  const endsAt = new Date(Date.now() + 72 * 3600 * 1000).toISOString();
+  const { startsAt, endsAt } = testWindow(96);
   const createRes = await request(app).post("/api/payment/reservations").send({
     customerName: "Token Test",
     customerEmail: "token@example.com",
@@ -15,6 +14,10 @@ async function paidReservation() {
     startsAt,
     endsAt,
   });
+  if (createRes.status !== 200) {
+    console.error("paidReservation create failed", createRes.status, createRes.body);
+  }
+  expect(createRes.status).toBe(200);
   const id = createRes.body.id;
   const dep = await request(app).post("/api/payment/deposit").send({ reservationId: id });
   const kau = await request(app).post("/api/payment/kauce").send({ reservationId: id });
@@ -53,7 +56,6 @@ describe("customer access token", () => {
     expect(act.body.status).toBe("ACTIVE");
     expect(act.body.vehicleUnlockUrl).toBeTruthy();
 
-    // token je jednorázový
     const again = await request(app)
       .post(`/api/payment/reservations/${id}/activate`)
       .send({ accessToken: sess.body.accessToken, customerEmail: "token@example.com" });

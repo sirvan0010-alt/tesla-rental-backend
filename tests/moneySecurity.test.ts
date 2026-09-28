@@ -2,12 +2,11 @@ import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { app } from "../src/app";
 import "./setup";
-import { testVehicleId } from "./setup";
+import { testVehicleId, testWindow } from "./setup";
 import { markActive, markReturned } from "../src/services/reservationService";
 
 async function createDraft() {
-  const startsAt = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
-  const endsAt = new Date(Date.now() + 72 * 3600 * 1000).toISOString();
+  const { startsAt, endsAt } = testWindow(72);
   const createRes = await request(app).post("/api/payment/reservations").send({
     customerName: "Money Test",
     customerEmail: "money@example.com",
@@ -16,6 +15,9 @@ async function createDraft() {
     startsAt,
     endsAt,
   });
+  if (createRes.status !== 200) {
+    console.error("createDraft failed", createRes.status, createRes.body);
+  }
   expect(createRes.status).toBe(200);
   return createRes.body;
 }
@@ -63,6 +65,7 @@ describe("P0 money + state guards", () => {
     await request(app)
       .post("/api/payment/webhook")
       .send({ transId: kau.body.transId, refId: r.id });
+    // markActive bez tokenu (interní service) — pro settle cestu
     await markActive(r.id);
     await markReturned({ reservationId: r.id, photoUrls: ["/uploads/returns/t.jpg"] });
 

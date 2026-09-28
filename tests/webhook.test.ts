@@ -2,12 +2,11 @@ import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { app } from "../src/app";
 import "./setup";
-import { testVehicleId } from "./setup";
+import { testVehicleId, testWindow } from "./setup";
 
 describe("platba -> webhook -> PAID -> přístup k vozu", () => {
   it("kompletní tok od vytvoření rezervace po PAID + vehicleAccessReady", async () => {
-    const startsAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
-    const endsAt = new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString();
+    const { startsAt, endsAt } = testWindow(48);
 
     const createRes = await request(app)
       .post("/api/payment/reservations")
@@ -20,6 +19,10 @@ describe("platba -> webhook -> PAID -> přístup k vozu", () => {
         endsAt,
       });
 
+    if (createRes.status !== 200) {
+      // diagnostika do CI logu
+      console.error("createReservation failed", createRes.status, createRes.body);
+    }
     expect(createRes.status).toBe(200);
     const reservationId = createRes.body.id;
     expect(reservationId).toBeDefined();
