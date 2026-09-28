@@ -86,7 +86,7 @@
 <div class="card" id="step-vehicle">
   <h1>Rezervace vozu</h1>
   <div class="step-label">Krok 1 z 4 · Vyberte vůz a termín</div>
-  <p class="hint">Bezkontaktní vyzvednutí — auto si vyzvednete sami, bez čekání na majitele. Záloha se strhne, kauce se jen zablokuje na kartě a po vrácení se uvolní.</p>
+  <p class="hint">Bezkontaktní vyzvednutí — auto si vyzvednete sami. Záloha se strhne, kauce se jen zablokuje na kartě.</p>
   <label for="vehicle">Vůz</label>
   <select id="vehicle"></select>
   <label for="starts">Od</label>
@@ -111,10 +111,7 @@
   <input id="license" type="file" accept="image/*" capture="environment" />
   <label for="idcard">Fotka občanského průkazu (volitelné)</label>
   <input id="idcard" type="file" accept="image/*" capture="environment" />
-  <p class="hint" style="margin-top:12px">
-    Doklady potřebujeme k ověření totožnosti a řidičského oprávnění kvůli pojištění vozu.
-    Ukládáme je zabezpečeně, nesdílíme je třetím stranám a po uplynutí zákonné lhůty je mažeme.
-  </p>
+  <div class="hint">Doklad potřebujeme k ověření totožnosti kvůli pojištění vozu. Ukládáme ho zabezpečeně a nesdílíme jej třetím stranám.</div>
   <div class="error" id="details-error"></div>
   <button onclick="submitDetails()">Pokračovat k platbě</button>
 </div>
@@ -130,13 +127,12 @@
 
 <div class="card" id="step-waiting" style="display:none">
   <h1>Zpracováváme platbu</h1>
-  <p>Až platba projde, tlačítko pro odemčení se zobrazí samo – stránku není třeba obnovovat.</p>
+  <p>Až banka platbu potvrdí, tlačítko pro odemčení se zobrazí samo – stránku není třeba obnovovat.</p>
   <div class="status-pill" id="status-pill">Čekání na potvrzení…</div>
-  <div class="hint" id="wait-hint" style="margin-top:12px"></div>
 </div>
 
 <div class="card" id="step-unlock" style="display:none">
-  <h1>Vše připraveno 🎉</h1>
+  <h1>Vše připraveno</h1>
   <p>Platba proběhla. V čase začátku rezervace stačí kliknout na tlačítko níže.</p>
   <button onclick="unlock()">Odemknout vůz</button>
   <div class="hint" id="unlock-hint"></div>
@@ -164,6 +160,7 @@
   let selectedVehicleId = null;
   let selectedStarts = null;
   let selectedEnds = null;
+  const FALLBACK_CONTACT = "+420 XXX XXX XXX";
 
   async function loadVehicles() {
     const select = document.getElementById("vehicle");
@@ -185,7 +182,6 @@
     const priceHint = document.getElementById("price-hint");
     errBox.textContent = "";
     priceHint.textContent = "";
-
     const vehicleId = document.getElementById("vehicle").value;
     const startsStr = document.getElementById("starts").value;
     const endsStr = document.getElementById("ends").value;
@@ -199,7 +195,6 @@
       errBox.textContent = "Datum konce musí být po datu začátku.";
       return;
     }
-
     try {
       const res = await fetch(
         `/api/vehicles/${vehicleId}/availability?start=${starts.toISOString()}&end=${ends.toISOString()}`
@@ -225,7 +220,6 @@
     const phone = document.getElementById("phone").value.trim();
     const errBox = document.getElementById("details-error");
     errBox.textContent = "";
-
     if (!name || !email || !phone) {
       errBox.textContent = "Vyplňte prosím všechna pole.";
       return;
@@ -243,12 +237,10 @@
       errBox.textContent = "Nahrajte prosím fotku řidičského průkazu.";
       return;
     }
-
     if (!selectedVehicleId || !selectedStarts || !selectedEnds) {
       errBox.textContent = "Nejdřív vyberte vůz a termín.";
       return;
     }
-
     try {
       const res = await fetch(`${API}/reservations`, {
         method: "POST",
@@ -266,7 +258,6 @@
       const reservation = await res.json();
       reservationId = reservation.id;
       window.currentReservation = reservation;
-
       const formData = new FormData();
       formData.append("driverLicense", licenseFile);
       const idcardFile = document.getElementById("idcard").files[0];
@@ -276,7 +267,6 @@
         body: formData,
       });
       if (!uploadRes.ok) throw new Error("upload");
-
       await loadMethods();
       show("step-payment");
     } catch {
@@ -326,7 +316,6 @@
           method: selectedMethod,
         }),
       }).then((r) => r.json());
-
       await fetch(`${API}/kauce`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -336,10 +325,8 @@
           customerEmail: email,
         }),
       });
-
       show("step-waiting");
       pollStatus();
-
       if (deposit.redirectUrl) window.location.href = deposit.redirectUrl;
     } catch {
       errBox.textContent = "Platbu se nepodařilo spustit, zkuste to prosím znovu.";
@@ -348,54 +335,56 @@
 
   async function pollStatus() {
     const pill = document.getElementById("status-pill");
-    const waitHint = document.getElementById("wait-hint");
-    const started = Date.now();
-    const PAYMENT_TIMEOUT_MS = 5 * 60 * 1000;
-    const ACCESS_TIMEOUT_MS = 5 * 60 * 1000;
-    let accessWaitStarted = null;
-
+    let attempts = 0;
+    const maxAttempts = 40;
     const check = async () => {
-      try {
-        const r = await fetch(`${API}/reservations/${reservationId}`);
-        const reservation = await r.json();
-        if (reservation.status === "PAID") {
-          if (!accessWaitStarted) accessWaitStarted = Date.now();
-          if (reservation.vehicleAccessReady) {
-            document.getElementById("unlock-hint").textContent = "";
-            show("step-unlock");
-            return;
-          }
-          await fetch(`${API}/reservations/${reservationId}/retry-access`, { method: "POST" }).catch(() => {});
-          document.getElementById("unlock-hint").textContent =
-            "Přístup k vozu se ještě dokončuje, zkuste tlačítko za chvíli.";
-          if (Date.now() - accessWaitStarted > ACCESS_TIMEOUT_MS) {
-            waitHint.textContent =
-              "Přístup se připravuje déle než obvykle. Ozveme se vám SMS/e-mailem, nebo volejte majitele.";
-            show("step-unlock");
-            return;
-          }
-          show("step-unlock");
-          return;
-        }
-        if (reservation.status === "FAILED") {
-          pill.textContent = "Platba se nezdařila";
-          waitHint.textContent = "Zkuste vytvořit novou rezervaci nebo jinou platební metodu.";
-          return;
-        }
-        if (Date.now() - started > PAYMENT_TIMEOUT_MS) {
-          pill.textContent = "Platba se nepotvrdila včas";
-          waitHint.textContent =
-            "Pokud jste platbu dokončili, obnovte stránku za chvíli. Jinak začněte rezervaci znovu.";
-          return;
-        }
-        pill.textContent = `Stav: ${reservation.status}`;
-        setTimeout(check, 3000);
-      } catch (e) {
-        pill.textContent = "Dočasný výpadek spojení…";
-        setTimeout(check, 5000);
+      attempts++;
+      const r = await fetch(`${API}/reservations/${reservationId}`);
+      const reservation = await r.json();
+      if (reservation.status === "PAID") {
+        pollVehicleAccess(reservation.vehicleAccessReady);
+        return;
       }
+      if (reservation.status === "FAILED") {
+        pill.textContent = "Platba se nezdařila";
+        return;
+      }
+      if (attempts >= maxAttempts) {
+        pill.textContent = `Potvrzení trvá déle než obvykle. Kontaktujte nás: ${FALLBACK_CONTACT}`;
+        return;
+      }
+      pill.textContent = `Stav: ${reservation.status}`;
+      setTimeout(check, 3000);
     };
     check();
+  }
+
+  async function pollVehicleAccess(alreadyReady) {
+    let attempts = 0;
+    const maxAttempts = 20;
+    const hintEl = () => document.getElementById("unlock-hint");
+    const check = async (ready) => {
+      if (ready) {
+        hintEl().textContent = "";
+        show("step-unlock");
+        return;
+      }
+      attempts++;
+      show("step-unlock");
+      await fetch(`${API}/reservations/${reservationId}/retry-access`, { method: "POST" }).catch(() => {});
+      hintEl().textContent = "Přístup k vozu se ještě připravuje…";
+      if (attempts >= maxAttempts) {
+        hintEl().textContent =
+          `Přístup k vozu se nepodařilo připravit automaticky. Kontaktujte nás: ${FALLBACK_CONTACT}`;
+        return;
+      }
+      setTimeout(async () => {
+        const r = await fetch(`${API}/reservations/${reservationId}`);
+        const reservation = await r.json();
+        check(reservation.vehicleAccessReady);
+      }, 3000);
+    };
+    check(alreadyReady);
   }
 
   async function unlock() {
@@ -435,15 +424,8 @@
   }
 
   function show(id) {
-    [
-      "step-vehicle",
-      "step-details",
-      "step-payment",
-      "step-waiting",
-      "step-unlock",
-      "step-return",
-      "step-done",
-    ].forEach((s) => (document.getElementById(s).style.display = s === id ? "block" : "none"));
+    ["step-vehicle","step-details","step-payment","step-waiting","step-unlock","step-return","step-done"]
+      .forEach((s) => (document.getElementById(s).style.display = s === id ? "block" : "none"));
   }
 </script>
 </body>
