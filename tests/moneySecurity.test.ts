@@ -25,7 +25,7 @@ describe("P0 money + state guards", () => {
     const r = await createDraft();
     const res = await request(app).post("/api/payment/deposit").send({
       reservationId: r.id,
-      amountCzk: 1, // podvodná částka — server ji nesmí použít
+      amountCzk: 1,
       customerEmail: "hacker@evil.test",
     });
     expect(res.status).toBe(200);
@@ -47,10 +47,10 @@ describe("P0 money + state guards", () => {
     expect(res.status).toBe(409);
   });
 
-  it("activate před PAID → 409", async () => {
+  it("activate bez accessToken → 401", async () => {
     const r = await createDraft();
-    const res = await request(app).post(`/api/payment/reservations/${r.id}/activate`);
-    expect(res.status).toBe(409);
+    const res = await request(app).post(`/api/payment/reservations/${r.id}/activate`).send({});
+    expect(res.status).toBe(401);
   });
 
   it("settle damageAmountCzk > kauce → 400", async () => {
