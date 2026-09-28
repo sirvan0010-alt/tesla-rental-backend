@@ -6,8 +6,8 @@ process.env.ADMIN_API_KEY = "test-secret-key-32chars-xxxxxx";
 
 describe("GET /health", () => {
   it("returns ok", async () => {
-    const { createApp } = await import("../src/app");
-    const res = await request(createApp()).get("/health");
+    const { app } = await import("../src/app");
+    const res = await request(app).get("/health");
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
   });
