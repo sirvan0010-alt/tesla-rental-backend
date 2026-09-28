@@ -1,51 +1,37 @@
-# AGENTS.md — context for AI / developers
+# AGENTS.md — čti před úpravami
 
-Repo: `sirvan0010-alt/tesla-rental-backend`  
-Purpose: contactless rental of **Tesla Model Y Performance** (Prostějov, CZ).
+Pro AI (Claude, Grok, další). Na projektu píše víc agentů — tenhle soubor snižuje konflikty.
 
-**Read next:** `docs/MULTI_AI_COLLABORATION.md` (why/how multi-AI) and `docs/PANEL-REVIEW.md` (role-based review status).
+## Před kódem
 
-## Who works here
+1. Tento soubor
+2. `README.md`
+3. `docs/PLAN.md` + `docs/PANEL-REVIEW.md`
+4. Při rozporu README vs kód → `git log`, ne vlastní domněnka
 
-- **Grok** — often GitHub write; implements, secures, CI, docs
-- **Claude** — review, local trials, patch proposals; may lack push
-- **Owner** — Comgate/FleetBold accounts, legal, insurance, car, production secrets
-- **Other AIs** — allowed if they follow this file and do not invent “done” against PANEL-REVIEW
+## Po změně (stejný commit)
 
-## Code status (truth = files on main)
+- Endpointy → README tabulka
+- Hotový PLAN bod → odškrtnout
+- Nová služba → `.env.example`
 
-Done:
+## Neměnit bez majitele
 
-- vehicle + date selection, availability
-- document upload + admin view
-- deposit + kauce (Comgate or **MOCK_MODE**)
-- states DRAFT → … → SETTLED
-- `getReservationPublic`, admin key guards, startup guard
-- CI, Dependabot, CodeQL, unit tests, landing stub, retention script
+- Comgate, app-based unlock (ne keybox), nešifrované doklady na disku, kauce pre-auth, názvy stavů rezervace
 
-Waiting on owner / external:
+## Security invarianty
 
-- real FleetBold API shape (`vehicleAccessService.ts` template)
-- real email/SMS (`notificationService.ts` stub)
-- production hosting, Sentry, object storage for uploads
+- requireAdminKey na PII, doklady, settle, release/capture
+- veřejný GET reservation jen getReservationPublic (bez unlock URL / PII / transId)
+- webhook ověřuje getPaymentStatus
+- uploads/ ne veřejný static bez admin klíče
 
-## Rules
+## Testy
 
-1. Prefer **MOCK_MODE** for full flow without real payment keys.
-2. Sensitive routes → `requireAdminKey`.
-3. Public GET reservation → only `getReservationPublic`.
-4. Unlock URL → not on public GET; `/activate` (+ later email/SMS).
-5. FleetBold changes → **only** `vehicleAccessService.ts`.
-6. After big changes → update `docs/PLAN.md` + `docs/PANEL-REVIEW.md`.
-7. Never commit real secrets or customer document binaries.
+- `src/app.ts` exportuje `app` **bez** listen
+- `src/server.ts` = guard + listen
+- `tests/webhook.test.ts`, `tests/settle.test.ts` — po změně peněžních cest aktualizuj testy
 
-## Local verify
+## Mapa
 
-```bash
-cp .env.example .env   # MOCK_MODE=true
-docker compose up -d
-npm install && npm run prisma:migrate && npm run prisma:seed
-npm test && npm run dev
-```
-
-Details: `HOW_TO_WORK_WITH_THIS.md`, `docs/PLAN.md`.
+Viz README + `docs/MULTI_AI_COLLABORATION.md`.

@@ -1,71 +1,37 @@
-# Plán — Tesla Y pronájem (Prostějov)
+# PLAN.md — aktuální stav projektu (živý dokument)
 
-## Cíl
+Jediné místo, kde má být pravda o tom, co je hotové. Věř tomuto souboru + `git log`, ne staré konverzaci.
 
-Bezkontaktní krátkodobý pronájem **Tesla Model Y Performance 2023** (bílý interiér), software-first (app přístup, bez keyboxu).
+Kontext: `docs/kompletni-plan-tesla-pronajem.md`, panel: `docs/PANEL-REVIEW.md`, AI: `AGENTS.md`.
 
-## Nově z panelu (integrováno)
+## Hotovo (funkční kód v main)
 
-- Vysvětlující text u nahrání dokladů + marketingová věta o bezkontaktním vyzvednutí
-- Timeout / retry při čekání na `vehicleAccessReady` (+ volání `/retry-access`)
-- Client-side validace e-mailu a telefonu
-- `scripts/purge-old-documents.ts` — GDPR retence (cron)
-- `src/app.ts` — Express app bez `listen` pro testy
-- Vitest: admin auth, health, contract `getReservationPublic`
-- `public/landing.html` — vstupní stránka (SEO / prodejní argumenty)
-- CI spouští `npm test`
+- [x] Express app `src/app.ts` + `src/server.ts` (listen + startup guard)
+- [x] Prisma Reservation + Vehicle, stavový cyklus
+- [x] Comgate + MOCK_MODE (záloha, kauce pre-auth, webhook)
+- [x] Výběr vozu/termínu, doklady, return fotky, admin.html
+- [x] getReservationPublic, requireAdminKey, timing-safe admin key
+- [x] CI build + job `test` (Postgres), CodeQL, Dependabot, protect-main
+- [x] Integrační testy webhook + settle (**napsáno; ověřit spuštěním v CI/lokálně**)
+- [x] `scripts/deleteExpiredDocuments.ts` + `npm run retention:cleanup`
+- [x] index.html: trust text, timeout/fallback kontakt při čekání na PAID/access
+- [x] landing.html (minimální)
 
-## Co je hotové v kódu
+## Rozdělané
 
-| Oblast | Stav |
-|--------|------|
-| Výběr vozu + termín + dostupnost | ✅ |
-| Doklady (ŘP + volitelně OP) + admin view | ✅ |
-| Záloha + pre-auth kauce (Comgate / MOCK) | ✅ |
-| Webhook → PAID → vehicle access (mock/šablona) | ✅ |
-| ACTIVE → RETURNED (fotky) → SETTLED | ✅ |
-| Security (public GET, admin key, startup guard) | ✅ |
-| CI + Dependabot + CodeQL + protect-main + unit tests | ✅ |
-| Ostré Comgate / FleetBold / notifikace / hosting | ❌ čeká na majitele |
-| Sentry / object storage pro uploads | ❌ doporučeno před ostrým provozem |
-| Plné DB integrační testy webhook/settle | ❌ další iterace |
+- [ ] package-lock.json + CI `npm ci`
+- [ ] prisma/migrations/ commitnuté (teď CI `db push`)
+- [ ] Secret scanning + push protection (GitHub UI)
+- [ ] Ověřit zelené `npm test` / CI job test
 
-## Zbývá
+## Čeká na majitele / externí
 
-### 1. U majitele (rychlé)
+- [ ] Comgate, FleetBold, SendGrid/Twilio, Railway
+- [ ] Zálohování uploads (R2/S3), Sentry
+- [ ] Pojištění, OP, GDPR/DPIA
+- [ ] Branding / fotky vozu, FILL `FALLBACK_CONTACT` v index.html
 
-- [ ] Secret scanning + push protection (GitHub Settings → Code security)
-- [ ] `npm install` → commit `package-lock.json` → volitelně CI na `npm ci`
-- [ ] Lokální mock E2E (`MOCK_MODE=true`)
-- [ ] Cron: `npm run purge:documents` (retence)
+## Otevřené otázky
 
-### 2. Externí služby (blokují ostrý provoz)
-
-- [ ] **Comgate** sandbox → test platby → produkce
-- [ ] **FleetBold** → upravit jen `vehicleAccessService.ts`
-- [ ] **SendGrid + Twilio/SMSbrána** → `notificationService.ts`
-- [ ] **Railway / VPS** + doména + HTTPS webhook
-- [ ] Záloha DB + R2/S3 pro `uploads/`
-
-### 3. Před prvním zákazníkem
-
-- [ ] E2E mock + Comgate sandbox + ngrok
-- [ ] Silný `ADMIN_API_KEY`
-- [ ] Pojištění, OP + GDPR (právník), DPIA
-- [ ] Skutečný VIN ve seedu
-- [ ] Fotky vozu / branding na landing
-
-## Doporučené pořadí
-
-1. Mock E2E lokálně  
-2. Comgate sandbox + ngrok  
-3. FleetBold  
-4. Notifikace + Sentry + R2  
-5. Deploy  
-6. Právní → první zákazník  
-
-## Odkazy
-
-- Repo: https://github.com/sirvan0010-alt/tesla-rental-backend  
-- Detail: `docs/kompletni-plan-tesla-pronajem.md`  
-- AI: `AGENTS.md`  
+- Testy napsané Claudem — první ověření: majitel nebo CI Actions po tomto pushi.
+- Duplicitní retenční skripty: kanonický je `scripts/deleteExpiredDocuments.ts` (purge:documents alias).
