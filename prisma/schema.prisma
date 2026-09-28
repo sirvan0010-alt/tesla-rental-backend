@@ -19,13 +19,13 @@ enum ReservationStatus {
 }
 
 model Vehicle {
-  id               String   @id @default(cuid())
-  vin              String   @unique
-  name             String
-  active           Boolean  @default(true)
-  dailyPriceCzk    Int
-  kauceAmountCzk   Int
-  createdAt        DateTime @default(now())
+  id             String   @id @default(cuid())
+  vin            String   @unique
+  name           String
+  active         Boolean  @default(true)
+  dailyPriceCzk  Int
+  kauceAmountCzk Int
+  createdAt      DateTime @default(now())
 
   reservations Reservation[]
 }
@@ -59,6 +59,11 @@ model Reservation {
   vehicleAccessId    String?
   vehicleUnlockUrl   String?
   vehicleAccessError String?
+
+  /// Náhodný token pro zákaznické /activate (ne veřejné ID rezervace)
+  customerAccessToken          String?   @unique
+  customerAccessTokenExpiresAt DateTime?
+  customerAccessTokenUsedAt    DateTime?
 
   returnPhotosUrls String[]
   damageNoteText   String?
