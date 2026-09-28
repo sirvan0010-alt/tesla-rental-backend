@@ -32,11 +32,59 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
-      - name: Unit tests
-        run: npm test
-        env:
-          MOCK_MODE: "true"
-          ADMIN_API_KEY: test-secret-key-32chars-xxxxxx
-
       - name: Build
         run: npm run build
+
+  test:
+    runs-on: ubuntu-latest
+    needs: build-and-check
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tesla
+          POSTGRES_PASSWORD: tesla
+          POSTGRES_DB: tesla_rental_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://tesla:tesla@localhost:5432/tesla_rental_test
+      MOCK_MODE: "true"
+      ADMIN_API_KEY: test-admin-key
+      COMGATE_MERCHANT_ID: "123456"
+      COMGATE_SECRET: change-me
+      COMGATE_TEST: "true"
+      VEHICLE_ACCESS_API_URL: https://api.fleetbold.com
+      VEHICLE_ACCESS_API_KEY: change-me
+      FRONTEND_RETURN_URL: http://localhost:3000/
+      BACKEND_CALLBACK_URL: http://localhost:3000/api/payment/webhook
+      PORT: "3000"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Push database schema
+        run: npx prisma db push
+
+      - name: Run tests
+        run: npm test

@@ -10,9 +10,10 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "ts-node prisma/seed.ts",
+    "retention:cleanup": "ts-node scripts/deleteExpiredDocuments.ts",
+    "purge:documents": "ts-node scripts/deleteExpiredDocuments.ts",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "purge:documents": "ts-node scripts/purge-old-documents.ts"
+    "test:watch": "vitest"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
@@ -36,6 +37,6 @@
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.5.3",
-    "vitest": "^2.1.0"
+    "vitest": "^2.0.5"
   }
 }
