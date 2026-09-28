@@ -107,13 +107,23 @@ router.get("/methods", async (_req, res) => {
   }
 });
 
+/**
+ * Částky a e-mail vždy z DB rezervace — klient je nesmí přepsat (P0 finance).
+ */
 router.post("/deposit", async (req, res) => {
-  const { reservationId, amountCzk, customerEmail, method } = req.body;
+  const { reservationId, method } = req.body;
   try {
+    const reservation = await getReservation(reservationId);
+    if (reservation.status !== "DRAFT" && reservation.status !== "PENDING_PAYMENT") {
+      return res.status(409).json({ error: "Zálohu nelze platit v tomto stavu rezervace" });
+    }
+    if (reservation.depositTransId) {
+      return res.status(409).json({ error: "Záloha pro tuto rezervaci už byla založena" });
+    }
     const payment = await createDepositPayment({
       reservationId,
-      amountCzk,
-      customerEmail,
+      amountCzk: reservation.depositAmountCzk,
+      customerEmail: reservation.customerEmail,
       method,
     });
     await markPendingPayment({ reservationId, depositTransId: payment.transId });
@@ -125,12 +135,19 @@ router.post("/deposit", async (req, res) => {
 });
 
 router.post("/kauce", async (req, res) => {
-  const { reservationId, depositCzk, customerEmail } = req.body;
+  const { reservationId } = req.body;
   try {
+    const reservation = await getReservation(reservationId);
+    if (reservation.status !== "DRAFT" && reservation.status !== "PENDING_PAYMENT") {
+      return res.status(409).json({ error: "Kauci nelze blokovat v tomto stavu rezervace" });
+    }
+    if (reservation.kauceTransId) {
+      return res.status(409).json({ error: "Kauce pro tuto rezervaci už byla založena" });
+    }
     const hold = await createDepositHold({
       reservationId,
-      depositCzk,
-      customerEmail,
+      depositCzk: reservation.kauceAmountCzk,
+      customerEmail: reservation.customerEmail,
     });
     await markPendingPayment({ reservationId, kauceTransId: hold.transId });
     res.json({ redirectUrl: hold.redirect, transId: hold.transId });
@@ -233,10 +250,16 @@ router.post("/reservations/:id/settle", requireAdminKey, async (req, res) => {
     }
 
     if (damaged) {
-      if (!damageAmountCzk || damageAmountCzk <= 0) {
+      const amount = Number(damageAmountCzk);
+      if (!amount || amount <= 0) {
         return res.status(400).json({ error: "U škody je nutné zadat damageAmountCzk > 0" });
       }
-      await captureDepositHold({ comgateTransId: reservation.kauceTransId, amountCzk: damageAmountCzk });
+      if (amount > reservation.kauceAmountCzk) {
+        return res.status(400).json({
+          error: `damageAmountCzk nesmí překročit kauci (${reservation.kauceAmountCzk} Kč)`,
+        });
+      }
+      await captureDepositHold({ comgateTransId: reservation.kauceTransId, amountCzk: amount });
     } else {
       await releaseDepositHold(reservation.kauceTransId);
     }

@@ -1,7 +1,6 @@
 import { prisma } from "../db";
 import { ReservationStatus } from "@prisma/client";
 
-/** Vytvoří novou rezervaci ve stavu DRAFT. Bere vehicleId, dopočítá VIN a ceny, ověří dostupnost. */
 export async function createReservation(params: {
   customerName: string;
   customerEmail: string;
@@ -10,24 +9,28 @@ export async function createReservation(params: {
   startsAt: Date;
   endsAt: Date;
 }) {
-  const vehicle = await prisma.vehicle.findUnique({ where: { id: params.vehicleId } });
-  if (!vehicle || !vehicle.active) {
-    throw new Error("Vůz neexistuje nebo není aktivně nabízený");
+  const vehicle = await prisma.vehicle.findFirst({
+    where: { id: params.vehicleId, active: true },
+  });
+  if (!vehicle) throw new Error("Vůz nenalezen nebo není aktivní");
+
+  if (params.endsAt <= params.startsAt) {
+    throw new Error("Datum konce musí být po datu začátku");
   }
 
-  const conflicting = await prisma.reservation.findFirst({
+  const conflict = await prisma.reservation.findFirst({
     where: {
       vehicleId: params.vehicleId,
-      status: { notIn: [ReservationStatus.FAILED, ReservationStatus.CANCELLED] },
+      status: { notIn: [ReservationStatus.CANCELLED, ReservationStatus.FAILED] },
       startsAt: { lt: params.endsAt },
       endsAt: { gt: params.startsAt },
     },
   });
-  if (conflicting) {
-    throw new Error("Vůz je v tomto termínu už rezervovaný");
-  }
+  if (conflict) throw new Error("Vůz je v tomto termínu obsazený");
 
-  const days = Math.max(1, Math.ceil((params.endsAt.getTime() - params.startsAt.getTime()) / (24 * 3600 * 1000)));
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const days = Math.max(1, Math.ceil((params.endsAt.getTime() - params.startsAt.getTime()) / msPerDay));
+  const depositAmountCzk = days * vehicle.dailyPriceCzk;
 
   return prisma.reservation.create({
     data: {
@@ -38,7 +41,7 @@ export async function createReservation(params: {
       vehicleVin: vehicle.vin,
       startsAt: params.startsAt,
       endsAt: params.endsAt,
-      depositAmountCzk: days * vehicle.dailyPriceCzk,
+      depositAmountCzk,
       kauceAmountCzk: vehicle.kauceAmountCzk,
       status: ReservationStatus.DRAFT,
     },
@@ -49,14 +52,7 @@ export async function getReservation(id: string) {
   return prisma.reservation.findUniqueOrThrow({ where: { id } });
 }
 
-/**
- * Bezpečná verze pro veřejný GET endpoint (bez přihlášení, jen podle ID
- * rezervace v URL). Nesmí vracet: vehicleUnlockUrl/vehicleAccessId (bearer
- * odkaz pro odemčení vozu), jméno/e-mail/telefon zákazníka, transId platby
- * ani odkazy na doklady - to všechno jde jen přes chráněné admin/interní
- * cesty. Frontend potřebuje pouze vědět, jestli je přístup k vozu už
- * připravený - k tomu slouží boolean vehicleAccessReady.
- */
+/** Veřejné DTO — bez VIN, PII, unlock URL, transId, access error detail. */
 export async function getReservationPublic(id: string) {
   const r = await prisma.reservation.findUniqueOrThrow({
     where: { id },
@@ -68,10 +64,8 @@ export async function getReservationPublic(id: string) {
       depositAmountCzk: true,
       kauceAmountCzk: true,
       vehicleId: true,
-      vehicleVin: true,
       createdAt: true,
       vehicleAccessId: true,
-      vehicleAccessError: true,
     },
   });
   return {
@@ -82,10 +76,8 @@ export async function getReservationPublic(id: string) {
     depositAmountCzk: r.depositAmountCzk,
     kauceAmountCzk: r.kauceAmountCzk,
     vehicleId: r.vehicleId,
-    vehicleVin: r.vehicleVin,
     createdAt: r.createdAt,
     vehicleAccessReady: Boolean(r.vehicleAccessId),
-    vehicleAccessError: r.vehicleAccessError ?? undefined,
   };
 }
 
@@ -160,7 +152,14 @@ export async function markActive(reservationId: string) {
   });
 }
 
+/** RETURNED jen z ACTIVE (ne z DRAFT). */
 export async function markReturned(params: { reservationId: string; photoUrls: string[] }) {
+  const r = await getReservation(params.reservationId);
+  if (r.status !== ReservationStatus.ACTIVE) {
+    const err = new Error(`Vrácení povoleno jen ze stavu ACTIVE (teď: ${r.status})`);
+    (err as any).statusCode = 409;
+    throw err;
+  }
   return prisma.reservation.update({
     where: { id: params.reservationId },
     data: { status: ReservationStatus.RETURNED, returnPhotosUrls: params.photoUrls },
