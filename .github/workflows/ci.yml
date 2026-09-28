@@ -9,6 +9,9 @@ on:
 jobs:
   build-and-check:
     runs-on: ubuntu-latest
+    env:
+      # prisma validate requires env URL even without a live DB
+      DATABASE_URL: postgresql://tesla:tesla@localhost:5432/tesla_rental
 
     steps:
       - name: Checkout
@@ -18,7 +21,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          # cache: npm vyžaduje package-lock.json — až bude v repu, zapněte znovu
 
       - name: Install dependencies
         run: npm install
