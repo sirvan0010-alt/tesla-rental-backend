@@ -122,7 +122,7 @@
   <div id="methods-list"></div>
   <div class="error" id="payment-error"></div>
   <button id="pay-btn" disabled onclick="pay()">Zaplatit a zablokovat kauci</button>
-  <div class="hint">Záloha se strhne ihned, kauce se pouze zablokuje na kartě a po vrácení vozu se uvolní.</div>
+  <div class="hint">Záloha se strhne ihned, kauce se pouze zablokuje na kartě a po vrácení vozu se uvolní. Částku určuje server podle rezervace.</div>
 </div>
 
 <div class="card" id="step-waiting" style="display:none">
@@ -303,30 +303,32 @@
   async function pay() {
     const errBox = document.getElementById("payment-error");
     errBox.textContent = "";
-    const email = document.getElementById("email").value.trim();
-    const reservation = window.currentReservation;
+    // Částky a e-mail bere backend z rezervace — klient je neposílá
     try {
-      const deposit = await fetch(`${API}/deposit`, {
+      const depositRes = await fetch(`${API}/deposit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           reservationId,
-          amountCzk: reservation.depositAmountCzk,
-          customerEmail: email,
           method: selectedMethod,
         }),
-      }).then((r) => r.json());
-      await fetch(`${API}/kauce`, {
+      });
+      const deposit = await depositRes.json();
+      if (!depositRes.ok) throw new Error(deposit.error || "deposit");
+
+      const kauceRes = await fetch(`${API}/kauce`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          reservationId,
-          depositCzk: reservation.kauceAmountCzk,
-          customerEmail: email,
-        }),
+        body: JSON.stringify({ reservationId }),
       });
+      if (!kauceRes.ok) {
+        const k = await kauceRes.json().catch(() => ({}));
+        throw new Error(k.error || "kauce");
+      }
+
       show("step-waiting");
       pollStatus();
+
       if (deposit.redirectUrl) window.location.href = deposit.redirectUrl;
     } catch {
       errBox.textContent = "Platbu se nepodařilo spustit, zkuste to prosím znovu.";
