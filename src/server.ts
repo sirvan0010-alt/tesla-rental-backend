@@ -1,9 +1,6 @@
 import "dotenv/config";
-import { createApp } from "./app";
+import { app } from "./app";
 
-// --- Startup guard: doklady a admin sekce nesmí jít do ostrého provozu
-// s chybějícím nebo výchozím ADMIN_API_KEY. V MOCK_MODE je to jen varování
-// (lokální vývoj), mimo MOCK_MODE server rovnou odmítne nastartovat.
 const isMock = process.env.MOCK_MODE === "true";
 const adminKey = process.env.ADMIN_API_KEY;
 const isDefaultAdminKey =
@@ -24,7 +21,6 @@ if (isDefaultAdminKey) {
   }
 }
 
-const app = createApp();
 const port = process.env.PORT ? Number(process.env.PORT) : 3000;
 app.listen(port, () => {
   console.log(`Tesla rental payment backend listening on :${port}`);
